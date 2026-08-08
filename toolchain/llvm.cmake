@@ -80,7 +80,7 @@ set(patch_files
 
 ExternalProject_Add(toolchain-llvm
     GIT_REPOSITORY ${REAVEROS_LLVM_REPO}
-    GIT_TAG ${REAVEROS_LLVM_TAG}
+    GIT_TAG ${REAVEROS_LLVM_REVISION}
     GIT_SHALLOW TRUE
     UPDATE_DISCONNECTED 1
 
@@ -138,11 +138,11 @@ foreach (architecture IN LISTS REAVEROS_ARCHITECTURES)
         set(_builtin_lib "${REAVEROS_BINARY_DIR}/install/toolchain/llvm/lib/clang/${_sub_path}/libclang_rt.builtins.a")
         set(_destination "${REAVEROS_BINARY_DIR}/install/sysroots/${architecture}-${mode}/usr/lib")
 
-        add_custom_command(TARGET toolchain-llvm
+        add_custom_command(TARGET toolchain-llvm POST_BUILD
             COMMAND mkdir -p ${_destination}
             COMMAND cp ${_builtin_lib} ${_destination}
         )
-        add_custom_command(TARGET toolchain-llvm-install
+        add_custom_command(TARGET toolchain-llvm-install POST_BUILD
             COMMAND mkdir -p ${_destination}
             COMMAND cp ${_builtin_lib} ${_destination}
         )
