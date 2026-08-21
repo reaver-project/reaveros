@@ -1,0 +1,97 @@
+name: Publish build environment
+
+on:
+    workflow_call:
+        inputs:
+            content_tag:
+                description: Validated content-derived cache tag
+                required: true
+                type: string
+
+permissions:
+    contents: read
+
+jobs:
+    publish:
+        name: Publish validated images to GHCR
+        if: github.event_name != 'pull_request_target' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        runs-on: ubuntu-latest
+        timeout-minutes: 30
+
+        permissions:
+            contents: read
+            id-token: write
+            packages: write
+
+        steps:
+          - name: Read the AWS infrastructure contract
+            id: stack
+            uses: reaver-project/infrastructure/actions/aws-stack-contract@8de857166f5b24448bd9e4121ae06cd5e6bc97be
+            with:
+                aws-region: ${{ vars.AWS_REGION }}
+                expected-contract-version: '1'
+                role-arn: ${{ vars.AWS_RUNNER_ROLE_ARN }}
+                role-session-name: reaveros-${{ github.run_id }}-publish
+                stack-name: ${{ vars.AWS_RUNNER_STACK_NAME }}
+
+          - name: Install the registry copy client
+            run: |
+                sudo apt-get update
+                sudo apt-get install --yes skopeo
+
+          - name: Publish the validated content tag and latest
+            env:
+                AWS_REGION: ${{ vars.AWS_REGION }}
+                BUILD_ENVIRONMENT: ${{ fromJSON(steps.stack.outputs.outputs).BuildEnvironmentRepositoryUri }}
+                CONTENT_TAG: ${{ inputs.content_tag }}
+                GHCR_TOKEN: ${{ github.token }}
+                UNPRUNED_BUILD_ENVIRONMENT: ${{ fromJSON(steps.stack.outputs.outputs).UnprunedBuildEnvironmentRepositoryUri }}
+            run: |
+                set -euo pipefail
+                if [[ ! ${CONTENT_TAG} =~ ^[0-9a-f]{64}$ ]]
+                then
+                    printf 'Invalid content tag: %s\n' "${CONTENT_TAG}" >&2
+                    exit 2
+                fi
+
+                auth_file=$(mktemp)
+                cleanup()
+                {
+                    rm -f "${auth_file}"
+                }
+                trap cleanup EXIT
+
+                registry=${BUILD_ENVIRONMENT%%/*}
+                aws ecr get-login-password --region "${AWS_REGION}" \
+                    | skopeo login \
+                        --authfile "${auth_file}" \
+                        --username AWS \
+                        --password-stdin \
+                        "${registry}"
+                printf '%s' "${GHCR_TOKEN}" \
+                    | skopeo login \
+                        --authfile "${auth_file}" \
+                        --username "${GITHUB_ACTOR}" \
+                        --password-stdin \
+                        ghcr.io
+
+                copy_image()
+                {
+                    source=$1
+                    destination=$2
+                    for destination_tag in "${CONTENT_TAG}" latest
+                    do
+                        skopeo copy \
+                            --all \
+                            --authfile "${auth_file}" \
+                            "docker://${source}:${CONTENT_TAG}" \
+                            "docker://${destination}:${destination_tag}"
+                    done
+                }
+
+                copy_image \
+                    "${BUILD_ENVIRONMENT}" \
+                    ghcr.io/reaver-project/reaveros-build-env
+                copy_image \
+                    "${UNPRUNED_BUILD_ENVIRONMENT}" \
+                    ghcr.io/reaver-project/reaveros-build-env/unpruned
