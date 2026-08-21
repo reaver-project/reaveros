@@ -1,0 +1,271 @@
+name: AWS runner
+
+on:
+    workflow_call:
+        inputs:
+            cache_tag:
+                description: Per-run candidate build-environment tag
+                required: true
+                type: string
+            defer_llvm:
+                description: Leave an LLVM rebuild for a subsequent large runner
+                default: false
+                required: false
+                type: boolean
+            refresh_cache:
+                description: Refresh the container operating system
+                default: false
+                required: false
+                type: boolean
+            runner_size:
+                description: Fixed runner class, either medium or large
+                required: true
+                type: string
+            source_sha:
+                description: Commit to validate on the ephemeral runner
+                required: true
+                type: string
+            source_repository:
+                description: Repository containing the revision to validate
+                required: true
+                type: string
+            target:
+                description: Architecture or image selected by the caller matrix
+                default: ''
+                required: false
+                type: string
+            task:
+                description: Work performed by this runner
+                required: true
+                type: string
+        outputs:
+            needs_large:
+                description: Whether build-environment preparation detected an LLVM rebuild
+                value: ${{ jobs.run.outputs.needs_large }}
+            ready:
+                description: Whether this runner produced the requested candidate environment
+                value: ${{ jobs.run.outputs.ready }}
+
+permissions:
+    contents: read
+
+jobs:
+    provision:
+        name: Provision ${{ inputs.runner_size }} runner
+        runs-on: ubuntu-latest
+        timeout-minutes: 25
+
+        permissions:
+            contents: read
+            id-token: write
+
+        outputs:
+            build_environment: ${{ fromJSON(steps.runner.outputs.stack-outputs).BuildEnvironmentRepositoryUri }}
+            candidate_build_environment: ${{ fromJSON(steps.runner.outputs.stack-outputs).CandidateBuildEnvironmentRepositoryUri }}
+            candidate_unpruned_build_environment: ${{ fromJSON(steps.runner.outputs.stack-outputs).CandidateUnprunedBuildEnvironmentRepositoryUri }}
+            instance_id: ${{ steps.runner.outputs.instance-id }}
+            labels: ${{ steps.runner.outputs.labels }}
+            staging_build_environment: ${{ fromJSON(steps.runner.outputs.stack-outputs).StagingBuildEnvironmentRepositoryUri }}
+            staging_unpruned_build_environment: ${{ fromJSON(steps.runner.outputs.stack-outputs).StagingUnprunedBuildEnvironmentRepositoryUri }}
+            unpruned_build_environment: ${{ fromJSON(steps.runner.outputs.stack-outputs).UnprunedBuildEnvironmentRepositoryUri }}
+
+        steps:
+          - name: Validate the runner request
+            env:
+                CACHE_TAG: ${{ inputs.cache_tag }}
+                DEFER_LLVM: ${{ inputs.defer_llvm }}
+                RUNNER_SIZE: ${{ inputs.runner_size }}
+                TARGET: ${{ inputs.target }}
+                TASK: ${{ inputs.task }}
+            run: |
+                set -euo pipefail
+                if [[ ! ${CACHE_TAG} =~ ^run-[0-9]+-[0-9]+$ ]]
+                then
+                    printf 'Invalid cache tag: %s\n' "${CACHE_TAG}" >&2
+                    exit 2
+                fi
+                if [[ ! ${RUNNER_SIZE} =~ ^(medium|large)$ ]]
+                then
+                    printf 'Invalid runner size: %s\n' "${RUNNER_SIZE}" >&2
+                    exit 2
+                fi
+                if [[ ! ${TARGET} =~ ^[a-z0-9-]*$ ]]
+                then
+                    printf 'Invalid matrix target: %s\n' "${TARGET}" >&2
+                    exit 2
+                fi
+
+                case ${TASK} in
+                    prepare)
+                        [[ -z ${TARGET} ]]
+                        ;;
+                    build-dependencies|unit-tests|image|boot)
+                        [[ -n ${TARGET} && ${RUNNER_SIZE} == medium && ${DEFER_LLVM} == false ]]
+                        ;;
+                    *)
+                        printf 'Invalid runner task: %s\n' "${TASK}" >&2
+                        exit 2
+                        ;;
+                esac
+
+          - name: Launch the JIT runner
+            id: runner
+            uses: reaver-project/infrastructure/actions/ephemeral-runner@8de857166f5b24448bd9e4121ae06cd5e6bc97be
+            with:
+                aws-region: ${{ vars.AWS_REGION }}
+                expected-contract-version: '1'
+                operation: launch
+                role-arn: ${{ vars.AWS_RUNNER_ROLE_ARN }}
+                runner-key: ${{ inputs.target == '' && inputs.task || format('{0}-{1}', inputs.task, inputs.target) }}
+                runner-profile: ${{ inputs.task == 'prepare' && 'builder' || 'validation' }}
+                runner-size: ${{ inputs.runner_size }}
+                stack-name: ${{ vars.AWS_RUNNER_STACK_NAME }}
+
+    run:
+        name: Run ${{ inputs.task }} ${{ inputs.target }}
+        needs: provision
+        runs-on: ${{ fromJSON(needs.provision.outputs.labels) }}
+        timeout-minutes: 240
+
+        permissions:
+            contents: read
+
+        outputs:
+            needs_large: ${{ steps.prepare.outputs.needs_large }}
+            ready: ${{ steps.prepare.outputs.ready }}
+
+        env:
+            AWS_REGION: ${{ vars.AWS_REGION }}
+
+        steps:
+          - name: Check out the requested revision
+            uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+            with:
+                repository: ${{ inputs.source_repository }}
+                ref: ${{ inputs.source_sha }}
+                persist-credentials: false
+
+          - name: Configure the build-environment cache
+            if: inputs.task != 'boot'
+            env:
+                BUILD_ENVIRONMENT: ${{ needs.provision.outputs.build_environment }}
+                CACHE_TAG: ${{ inputs.cache_tag }}
+                CANDIDATE_BUILD_ENVIRONMENT: ${{ needs.provision.outputs.candidate_build_environment }}
+                CANDIDATE_UNPRUNED_BUILD_ENVIRONMENT: ${{ needs.provision.outputs.candidate_unpruned_build_environment }}
+                STAGING_BUILD_ENVIRONMENT: ${{ needs.provision.outputs.staging_build_environment }}
+                STAGING_UNPRUNED_BUILD_ENVIRONMENT: ${{ needs.provision.outputs.staging_unpruned_build_environment }}
+                TASK: ${{ inputs.task }}
+                UNPRUNED_BUILD_ENVIRONMENT: ${{ needs.provision.outputs.unpruned_build_environment }}
+            run: |
+                set -euo pipefail
+                registry=${BUILD_ENVIRONMENT%%/*}
+                aws ecr get-login-password --region "${AWS_REGION}" \
+                    | docker login --username AWS --password-stdin "${registry}"
+
+                if [[ ${TASK} == prepare ]]
+                then
+                    toolchain_key=$(./docker/toolchain-key)
+                    {
+                        printf 'REAVEROS_BUILD_ENV_IMAGE=%s\n' "${STAGING_BUILD_ENVIRONMENT}"
+                        printf 'REAVEROS_BUILD_ENV_UNPRUNED_IMAGE=%s\n' "${STAGING_UNPRUNED_BUILD_ENVIRONMENT}"
+                        printf 'REAVEROS_BUILD_ENV_SEED_IMAGE=%s\n' "${BUILD_ENVIRONMENT}"
+                        printf 'REAVEROS_BUILD_ENV_SEED_UNPRUNED_IMAGE=%s\n' "${UNPRUNED_BUILD_ENVIRONMENT}"
+                        printf 'REAVEROS_BUILD_ENV_FALLBACK_IMAGE=%s\n' "${CANDIDATE_BUILD_ENVIRONMENT}"
+                        printf 'REAVEROS_BUILD_ENV_FALLBACK_UNPRUNED_IMAGE=%s\n' "${CANDIDATE_UNPRUNED_BUILD_ENVIRONMENT}"
+                        printf 'REAVEROS_BUILD_ENV_SEED_TAG=%s\n' "${toolchain_key}"
+                        printf 'REAVEROS_BUILD_ENV_TAG=%s\n' "${CACHE_TAG}"
+                    } >> "${GITHUB_ENV}"
+                else
+                    image="${STAGING_BUILD_ENVIRONMENT}:${CACHE_TAG}"
+                    docker pull "${image}"
+                    printf 'BUILD_ENVIRONMENT_IMAGE=%s\n' "${image}" >> "${GITHUB_ENV}"
+                fi
+
+          - name: Prepare the candidate build environment
+            id: prepare
+            if: inputs.task == 'prepare'
+            env:
+                DEFER_LLVM: ${{ inputs.defer_llvm }}
+                REFRESH_CACHE: ${{ inputs.refresh_cache }}
+            run: |
+                set -euo pipefail
+                arguments=()
+                if [[ ${DEFER_LLVM} == true ]]
+                then
+                    arguments+=(--defer-llvm)
+                fi
+                if [[ ${REFRESH_CACHE} == true ]]
+                then
+                    arguments+=(--refresh)
+                fi
+
+                ./docker/update-images "${arguments[@]}"
+                if [[ $(awk -F= '/^ready=/{ print $2 }' "${GITHUB_OUTPUT}" | tail -n1) == true ]]
+                then
+                    docker push "$(./docker/image-ref pruned)"
+                    docker push "$(./docker/image-ref unpruned)"
+                fi
+
+          - name: Check build-system dependencies
+            if: inputs.task == 'build-dependencies'
+            run: ./ci/check-build-dependencies '${{ inputs.target }}' "${BUILD_ENVIRONMENT_IMAGE}"
+
+          - name: Run unit tests
+            if: inputs.task == 'unit-tests'
+            run: ./ci/run-unit-tests '${{ inputs.target }}' "${BUILD_ENVIRONMENT_IMAGE}"
+
+          - name: Build image
+            if: inputs.task == 'image'
+            run: ./ci/build-image '${{ inputs.target }}' "${BUILD_ENVIRONMENT_IMAGE}" artifacts
+
+          - name: Upload image
+            if: inputs.task == 'image'
+            uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+            with:
+                name: image-${{ inputs.target }}-${{ github.run_id }}-${{ github.run_attempt }}
+                path: artifacts/${{ inputs.target }}.img
+                if-no-files-found: error
+                retention-days: 7
+
+          - name: Download image
+            if: inputs.task == 'boot'
+            uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+            with:
+                name: image-${{ inputs.target }}-${{ github.run_id }}-${{ github.run_attempt }}
+                path: artifacts
+
+          - name: Smoke-test image
+            if: inputs.task == 'boot'
+            run: ./ci/smoke-test-uefi-amd64 "artifacts/${{ inputs.target }}.img" "artifacts/${{ inputs.target }}.serial.log"
+
+          - name: Upload serial log
+            if: always() && inputs.task == 'boot'
+            uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+            with:
+                name: serial-${{ inputs.target }}-${{ github.run_id }}-${{ github.run_attempt }}
+                path: artifacts/${{ inputs.target }}.serial.log
+                if-no-files-found: warn
+                retention-days: 7
+
+    cleanup:
+        name: Terminate ephemeral runner
+        if: always() && needs.provision.outputs.instance_id != ''
+        needs:
+          - provision
+          - run
+        runs-on: ubuntu-latest
+        timeout-minutes: 10
+
+        permissions:
+            contents: read
+            id-token: write
+
+        steps:
+          - name: Terminate the runner
+            uses: reaver-project/infrastructure/actions/ephemeral-runner@8de857166f5b24448bd9e4121ae06cd5e6bc97be
+            with:
+                aws-region: ${{ vars.AWS_REGION }}
+                instance-id: ${{ needs.provision.outputs.instance_id }}
+                operation: terminate
+                role-arn: ${{ vars.AWS_RUNNER_ROLE_ARN }}
+                stack-name: ${{ vars.AWS_RUNNER_STACK_NAME }}
