@@ -78,15 +78,6 @@ set(patch_files
     ${CMAKE_CURRENT_LIST_DIR}/llvm/patches/000-reaveros-support-with-less-plt.patch
 )
 
-add_custom_command(OUTPUT llvm-patch-timestamp
-    COMMAND touch llvm-patch-timestamp
-    DEPENDS ${patch_files}
-)
-
-add_custom_target(llvm-patch-timestamp-target
-    DEPENDS llvm-patch-timestamp
-)
-
 ExternalProject_Add(toolchain-llvm
     GIT_REPOSITORY ${REAVEROS_LLVM_REPO}
     GIT_TAG ${REAVEROS_LLVM_TAG}
@@ -95,7 +86,7 @@ ExternalProject_Add(toolchain-llvm
 
     STEP_TARGETS install
 
-    DEPENDS toolchain-cmake-install llvm-patch-timestamp-target
+    DEPENDS toolchain-cmake-install
 
     INSTALL_DIR ${REAVEROS_BINARY_DIR}/install/toolchain/llvm
 
@@ -104,7 +95,7 @@ ExternalProject_Add(toolchain-llvm
 
     LIST_SEPARATOR |
 
-    PATCH_COMMAND git reset --hard && git clean -fxd && git apply ${patch_files}
+    PATCH_COMMAND ""
 
     CMAKE_COMMAND ${REAVEROS_CMAKE}
     CMAKE_ARGS
@@ -123,6 +114,16 @@ ExternalProject_Add(toolchain-llvm
         -DLLVM_PARALLEL_LINK_JOBS=${REAVEROS_LLVM_PARALLEL_LINK_JOBS}
         -DLLVM_INCLUDE_TESTS=OFF
         -DLLVM_INCLUDE_EXAMPLES=OFF
+)
+ExternalProject_Add_Step(toolchain-llvm
+    apply-patches
+    COMMAND git reset --hard
+    COMMAND git clean -fxd
+    COMMAND git apply ${patch_files}
+    DEPENDEES set-to-tag
+    DEPENDERS configure
+    DEPENDS ${patch_files}
+    WORKING_DIRECTORY <SOURCE_DIR>
 )
 reaveros_add_ep_prune_target(toolchain-llvm)
 reaveros_add_ep_fetch_tag_target(toolchain-llvm)
