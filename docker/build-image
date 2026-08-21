@@ -1,38 +1,46 @@
 #!/usr/bin/env bash
 
-set -xe
+set -euo pipefail
 
-sha=$(git rev-parse HEAD)
+self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+repo_root=$(git -C "${self_dir}" rev-parse --show-toplevel)
 
-docker pull debian:unstable
+# shellcheck source=docker/build-environment.conf
+source "${self_dir}/build-environment.conf"
 
-docker run -v $(pwd):/reaveros -t --name reaveros-docker-build-${sha}-full debian:unstable /usr/bin/env bash -c '
-    set -xe
-    apt update
-    apt install build-essential automake cmake git python3 bison flex libssl-dev ccache cpio -y
-    apt full-upgrade -y
-    apt clean
+unpruned_image=$("${self_dir}/image-ref" unpruned)
+pruned_image=$("${self_dir}/image-ref" pruned)
+unpruned_repository=${unpruned_image%:*}
+pruned_repository=${pruned_image%:*}
+container="reaveros-docker-build-${$}"
 
-    mkdir /build
-    cd /build
-    cmake /reaveros -DREAVEROS_ENABLE_UNIT_TESTS=ON
-    make all-toolchain -j$(nproc)
-'
+cleanup()
+{
+    docker rm -f "${container}" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
 
-docker export reaveros-docker-build-${sha}-full \
-    | docker import - --change "CMD /usr/bin/env bash" ghcr.io/griwes/reaveros-build-env/unpruned:${sha}
+docker pull "${reaveros_build_environment_base_image}"
 
-docker tag ghcr.io/griwes/reaveros-build-env/unpruned:${sha} ghcr.io/griwes/reaveros-build-env/unpruned:latest
+packages=$(printf ' %q' "${reaveros_build_environment_packages[@]}")
+docker run \
+    --name "${container}" \
+    --volume "${repo_root}:/reaveros:ro" \
+    "${reaveros_build_environment_base_image}" \
+    /usr/bin/env bash -c "
+        set -euo pipefail
+        apt-get update
+        apt-get install --yes${packages}
+        apt-get full-upgrade --yes
+        apt-get clean
 
-docker run -v $(pwd):/reaveros --name reaveros-docker-update-${sha} ghcr.io/griwes/reaveros-build-env/unpruned:latest /usr/bin/env bash -c '
-    set -xe
+        mkdir /build
+        /reaveros/docker/build-toolchain
+    "
 
-    cd /build
-    make all-toolchain-prune -j$(nproc)
-'
+docker export "${container}" \
+    | docker import --change 'CMD ["/usr/bin/env", "bash"]' - "${unpruned_image}"
 
-docker export reaveros-docker-update-${sha} \
-    | docker import - --change "CMD /usr/bin/env bash" ghcr.io/griwes/reaveros-build-env:${sha}
-
-docker tag ghcr.io/griwes/reaveros-build-env:${sha} ghcr.io/griwes/reaveros-build-env:latest
-
+docker tag "${unpruned_image}" "${unpruned_repository}:latest"
+"${self_dir}/prune-image" "${unpruned_image}" "${pruned_image}"
+docker tag "${pruned_image}" "${pruned_repository}:latest"

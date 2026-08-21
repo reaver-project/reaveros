@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+mode=build
+defer_llvm=false
+
+while [[ $# -gt 0 ]]
+do
+    case $1 in
+        --defer-llvm)
+            defer_llvm=true
+            ;;
+        --update)
+            mode=update
+            ;;
+        *)
+            printf 'usage: %s [--update [--defer-llvm]]\n' "$0" >&2
+            exit 2
+            ;;
+    esac
+    shift
+done
+
+if [[ ${mode} != update ]] && ${defer_llvm}
+then
+    printf '%s: --defer-llvm requires --update\n' "$0" >&2
+    exit 2
+fi
+
+build_directory=${REAVEROS_BUILD_DIRECTORY:-/build}
+source_directory=${REAVEROS_SOURCE_DIRECTORY:-/reaveros}
+cd "${build_directory}"
+cmake "${source_directory}" -DREAVEROS_ENABLE_UNIT_TESTS=ON
+
+if [[ ${mode} == build ]]
+then
+    exec make all-toolchain -j"$(nproc)"
+fi
+
+target_rebuild_commands()
+{
+    target=$1
+    make --dry-run --no-print-directory "${target}"
+}
+
+all_toolchain_commands=$(target_rebuild_commands all-toolchain)
+llvm_commands=$(target_rebuild_commands toolchain-llvm)
+
+all_toolchain=false
+llvm=false
+if grep --extended-regexp --quiet \
+    "Performing (download|update|patch|configure|build|install) step for '" \
+    <<<"${all_toolchain_commands}"
+then
+    all_toolchain=true
+fi
+if grep --fixed-strings --quiet \
+    "Performing build step for 'toolchain-llvm'" \
+    <<<"${llvm_commands}"
+then
+    llvm=true
+fi
+
+printf 'Toolchain rebuild required: %s\n' "${all_toolchain}"
+printf 'LLVM rebuild required: %s\n' "${llvm}"
+
+if ${defer_llvm} && ${llvm}
+then
+    printf 'reaveros_update_result=deferred\n'
+    exit 0
+fi
+
+# shellcheck source=docker/build-environment.conf
+source /reaveros/docker/build-environment.conf
+apt-get update
+apt-get install --yes "${reaveros_build_environment_packages[@]}"
+apt-get full-upgrade --yes
+apt-get clean
+make all-toolchain -j"$(nproc)"
+printf 'reaveros_update_result=updated\n'

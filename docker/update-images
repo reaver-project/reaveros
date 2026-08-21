@@ -1,54 +1,166 @@
 #!/usr/bin/env bash
 
-set -ex
+set -euo pipefail
 
-sha=$(git rev-parse HEAD)
-self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
+self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+repo_root=$(git -C "${self_dir}" rev-parse --show-toplevel)
+defer_llvm=false
+refresh=false
 
-# docker pull ghcr.io/griwes/reaveros-build-env/unpruned:latest
-docker run -t -v $(pwd):/reaveros --name reaveros-docker-update-${sha}-full ghcr.io/griwes/reaveros-build-env/unpruned:latest /usr/bin/env bash -c '
-    set -xe
-    set -o pipefail
+while [[ $# -gt 0 ]]
+do
+    case $1 in
+        --defer-llvm)
+            defer_llvm=true
+            ;;
+        --refresh)
+            refresh=true
+            ;;
+        *)
+            printf 'usage: %s [--defer-llvm] [--refresh]\n' "$0" >&2
+            exit 2
+            ;;
+    esac
+    shift
+done
 
-    apt update
-    apt install build-essential automake cmake git python3 bison flex libssl-dev ccache cpio -y
-    apt full-upgrade -y
-    apt clean
+unpruned_image=$("${self_dir}/image-ref" unpruned)
+pruned_image=$("${self_dir}/image-ref" pruned)
+unpruned_repository=${unpruned_image%:*}
+pruned_repository=${pruned_image%:*}
+tag=${unpruned_image##*:}
+seed_tag=${REAVEROS_BUILD_ENV_SEED_TAG:-${tag}}
 
-    cd /build
-    cmake . -DREAVEROS_ENABLE_UNIT_TESTS=ON
-    make all-toolchain -j$(nproc) | tee /reaveros/docker/.build-log
-' || { rm -f docker/.build-log; docker rm reaveros-docker-update-${sha}-full; "${self_dir}"/build-image; exit; }
+seed_unpruned_repository=${REAVEROS_BUILD_ENV_SEED_UNPRUNED_IMAGE:-${unpruned_repository}}
+seed_pruned_repository=${REAVEROS_BUILD_ENV_SEED_IMAGE:-${pruned_repository}}
+seed_unpruned_image="${seed_unpruned_repository}:${seed_tag}"
+seed_pruned_image="${seed_pruned_repository}:${seed_tag}"
+fallback_unpruned_repository=${REAVEROS_BUILD_ENV_FALLBACK_UNPRUNED_IMAGE:-}
+fallback_pruned_repository=${REAVEROS_BUILD_ENV_FALLBACK_IMAGE:-}
+container="reaveros-docker-update-${$}"
+update_log=$(mktemp)
 
-# If only lines like "[xxx%] Built target ..." were printed, everything was up to date.
-if [ -f docker/.build-log ] && ! cat docker/.build-log | grep -v Built -q
+cleanup()
+{
+    docker rm -f "${container}" >/dev/null 2>&1 || true
+    rm -f "${update_log}"
+}
+trap cleanup EXIT
+
+report_result()
+{
+    needs_large=$1
+    ready=$2
+    if [[ -n ${GITHUB_OUTPUT:-} ]]
+    then
+        {
+            printf 'needs_large=%s\n' "${needs_large}"
+            printf 'ready=%s\n' "${ready}"
+        } >> "${GITHUB_OUTPUT}"
+    fi
+}
+
+reuse_pair()
+{
+    source_unpruned=$1
+    source_pruned=$2
+
+    docker tag "${source_unpruned}" "${unpruned_image}"
+    docker tag "${source_pruned}" "${pruned_image}"
+    docker tag "${unpruned_image}" "${unpruned_repository}:latest"
+    docker tag "${pruned_image}" "${pruned_repository}:latest"
+    report_result false true
+}
+
+if ! ${refresh} \
+    && docker pull "${unpruned_image}" \
+    && docker pull "${pruned_image}"
 then
-    docker tag ghcr.io/griwes/reaveros-build-env/unpruned:latest ghcr.io/griwes/reaveros-build-env/unpruned:${sha}
-
-    docker pull ghcr.io/griwes/reaveros-build-env:latest
-    docker tag ghcr.io/griwes/reaveros-build-env:latest ghcr.io/griwes/reaveros-build-env:${sha}
-
-    rm docker/.build-log
-
+    reuse_pair "${unpruned_image}" "${pruned_image}"
     exit 0
 fi
 
-rm docker/.build-log
+if ! ${refresh} \
+    && docker pull "${seed_unpruned_image}" \
+    && docker pull "${seed_pruned_image}"
+then
+    reuse_pair "${seed_unpruned_image}" "${seed_pruned_image}"
+    exit 0
+fi
 
-docker export reaveros-docker-update-${sha}-full \
-    | docker import - --change "CMD /usr/bin/env bash" ghcr.io/griwes/reaveros-build-env/unpruned:${sha}
+if ! ${refresh} \
+    && [[ -n ${fallback_unpruned_repository} ]] \
+    && [[ -n ${fallback_pruned_repository} ]] \
+    && docker pull "${fallback_unpruned_repository}:${seed_tag}" \
+    && docker pull "${fallback_pruned_repository}:${seed_tag}"
+then
+    reuse_pair \
+        "${fallback_unpruned_repository}:${seed_tag}" \
+        "${fallback_pruned_repository}:${seed_tag}"
+    exit 0
+fi
 
-docker tag ghcr.io/griwes/reaveros-build-env/unpruned:${sha} ghcr.io/griwes/reaveros-build-env/unpruned:latest
+seed_image=
+if docker pull "${unpruned_image}"
+then
+    seed_image=${unpruned_image}
+elif docker pull "${seed_unpruned_image}"
+then
+    seed_image=${seed_unpruned_image}
+elif [[ -n ${fallback_unpruned_repository} ]] \
+    && docker pull "${fallback_unpruned_repository}:${seed_tag}"
+then
+    seed_image="${fallback_unpruned_repository}:${seed_tag}"
+elif [[ -n ${fallback_unpruned_repository} ]] \
+    && docker pull "${fallback_unpruned_repository}:latest"
+then
+    seed_image="${fallback_unpruned_repository}:latest"
+elif [[ -z ${fallback_unpruned_repository} ]] \
+    && docker pull "${seed_unpruned_repository}:latest"
+then
+    seed_image="${seed_unpruned_repository}:latest"
+fi
 
-docker run -v $(pwd):/reaveros --name reaveros-docker-update-${sha} ghcr.io/griwes/reaveros-build-env/unpruned:latest /usr/bin/env bash -c '
-    set -xe
+if [[ -z ${seed_image} ]]
+then
+    if ${defer_llvm}
+    then
+        printf 'No cached build environment is available; deferring the complete build to a large runner.\n'
+        report_result true false
+        exit 0
+    fi
+    "${self_dir}/build-image"
+    report_result false true
+    exit 0
+fi
 
-    cd /build
-    make all-toolchain-prune -j$(nproc)
-'
+update_arguments=(--update)
+if ${defer_llvm}
+then
+    update_arguments+=(--defer-llvm)
+fi
+docker run \
+    --name "${container}" \
+    --volume "${repo_root}:/reaveros:ro" \
+    "${seed_image}" \
+    /reaveros/docker/build-toolchain "${update_arguments[@]}" \
+    | tee "${update_log}"
 
-docker export reaveros-docker-update-${sha} \
-    | docker import - --change "CMD /usr/bin/env bash" ghcr.io/griwes/reaveros-build-env:${sha}
-
-docker tag ghcr.io/griwes/reaveros-build-env:${sha} ghcr.io/griwes/reaveros-build-env:latest
-
+result=$(awk -F= '/^reaveros_update_result=/{ print $2 }' "${update_log}" | tail -n1)
+case ${result} in
+    deferred)
+        report_result true false
+        ;;
+    updated)
+        docker export "${container}" \
+            | docker import --change 'CMD ["/usr/bin/env", "bash"]' - "${unpruned_image}"
+        docker tag "${unpruned_image}" "${unpruned_repository}:latest"
+        "${self_dir}/prune-image" "${unpruned_image}" "${pruned_image}"
+        docker tag "${pruned_image}" "${pruned_repository}:latest"
+        report_result false true
+        ;;
+    *)
+        printf 'The build-environment update did not report a valid result.\n' >&2
+        exit 1
+        ;;
+esac
