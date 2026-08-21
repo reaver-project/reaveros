@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+repo_root=$(git -C "${self_dir}" rev-parse --show-toplevel)
+infrastructure_contract_version=$(<"${self_dir}/infrastructure-contract-version")
+infrastructure_revision=$(<"${self_dir}/infrastructure-revision")
+if [[ ! ${infrastructure_contract_version} =~ ^[0-9]+$ \
+    || ! ${infrastructure_revision} =~ ^[0-9a-f]{40}$ ]]
+then
+    printf 'Invalid recorded infrastructure contract or revision.\n' >&2
+    exit 1
+fi
+mapfile -t workflow_files < <(
+    find "${repo_root}/.github/workflows" \
+        -maxdepth 1 \
+        -type f \
+        -name '*.yml' \
+        -print \
+        | sort
+)
+
+for workflow in "${workflow_files[@]}"
+do
+    while IFS= read -r reference
+    do
+        if [[ ${reference} == ./* ]]
+        then
+            continue
+        fi
+        revision=${reference##*@}
+        if [[ ! ${revision} =~ ^[0-9a-f]{40}$ ]]
+        then
+            printf '%s contains an action that is not pinned by full SHA: %s\n' \
+                "${workflow}" "${reference}" >&2
+            exit 1
+        fi
+    done < <(
+        sed -nE 's/^[[:space:]]*uses:[[:space:]]*([^[:space:]#]+).*/\1/p' \
+            "${workflow}"
+    )
+done
+
+mapfile -t infrastructure_references < <(
+    sed -nE \
+        's/^[[:space:]]*uses:[[:space:]]*(reaver-project\/infrastructure\/actions\/[^[:space:]#]+).*/\1/p' \
+        "${workflow_files[@]}"
+)
+if [[ ${#infrastructure_references[@]} -ne 4 ]]
+then
+    printf 'Expected four shared infrastructure action uses, found %s.\n' \
+        "${#infrastructure_references[@]}" >&2
+    exit 1
+fi
+for reference in "${infrastructure_references[@]}"
+do
+    if [[ ${reference##*@} != "${infrastructure_revision}" ]]
+    then
+        printf 'Shared infrastructure action has the wrong revision: %s\n' \
+            "${reference}" >&2
+        exit 1
+    fi
+done
+
+for contract_consumer in \
+    "${repo_root}/.github/workflows/aws-cache-promotion.yml" \
+    "${repo_root}/.github/workflows/aws-publish-build-environment.yml" \
+    "${repo_root}/.github/workflows/aws-runner.yml"
+do
+    if ! grep --fixed-strings --quiet \
+        "expected-contract-version: '${infrastructure_contract_version}'" \
+        "${contract_consumer}"
+    then
+        printf '%s does not require infrastructure contract version 1.\n' \
+            "${contract_consumer}" >&2
+        exit 1
+    fi
+done
+
+if grep --extended-regexp --quiet \
+    'uses:[[:space:]]+[^.][^[:space:]]*reaveros/.github/workflows/' \
+    "${workflow_files[@]}"
+then
+    printf 'A same-repository reusable workflow uses a mutable remote reference.\n' >&2
+    exit 1
+fi
+
+obsolete_paths=(
+    ci/aws/deploy-infrastructure
+    ci/aws/launch-runner
+    ci/aws/plan-infrastructure
+    ci/aws/terminate-runner
+    ci/aws/test-infrastructure
+    infra
+)
+for obsolete_path in "${obsolete_paths[@]}"
+do
+    if [[ -e ${repo_root}/${obsolete_path} ]]
+    then
+        printf 'Retired infrastructure helper still exists: %s\n' \
+            "${obsolete_path}" >&2
+        exit 1
+    fi
+done
+
+if grep --extended-regexp --quiet \
+    'RunnerAppSecret|runner[_-]app[_-]secret|secretsmanager' \
+    "${workflow_files[@]}"
+then
+    printf 'A ReaverOS workflow attempts to read runner-manager credentials.\n' >&2
+    exit 1
+fi
+
+printf 'AWS CI workflow policy tests passed.\n'
