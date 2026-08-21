@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $# -gt 1 ]]
+then
+    printf 'usage: %s [repository]\n' "$0" >&2
+    exit 2
+fi
+
+repo_root=${1:-.}
+repo_root=$(git -C "${repo_root}" rev-parse --show-toplevel)
+cd "${repo_root}"
+
+{
+    printf 'reaveros-build-environment-v1\0'
+
+    while IFS= read -r -d '' path
+    do
+        printf '%s\0' "${path}"
+        git ls-files --stage -- "${path}" | cut -d ' ' -f 1
+        git hash-object -- "${path}"
+    done < <(
+        git ls-files -z -- \
+            CMakeLists.txt \
+            cmake \
+            docker \
+            toolchain
+    )
+} | sha256sum | cut -d ' ' -f 1
