@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $# -ne 9 ]]
+then
+    printf '%s\n' \
+        "usage: $0 <staging image> <staging unpruned image>" \
+        '    <candidate image> <candidate unpruned image>' \
+        '    <production image> <production unpruned image>' \
+        '    <source tag> <content tag> <publish: true|false>' >&2
+    exit 2
+fi
+
+if [[ -z ${AWS_REGION:-} ]]
+then
+    printf 'AWS_REGION must be set.\n' >&2
+    exit 1
+fi
+
+staging_image=$1
+staging_unpruned_image=$2
+candidate_image=$3
+candidate_unpruned_image=$4
+production_image=$5
+production_unpruned_image=$6
+source_tag=$7
+content_tag=$8
+publish=$9
+
+if [[ ! ${source_tag} =~ ^run-[0-9]+-[0-9]+$ ]]
+then
+    printf 'Invalid source tag: %s\n' "${source_tag}" >&2
+    exit 2
+fi
+if [[ ! ${content_tag} =~ ^[0-9a-f]{64}$ ]]
+then
+    printf 'Invalid content tag: %s\n' "${content_tag}" >&2
+    exit 2
+fi
+if [[ ! ${publish} =~ ^(true|false)$ ]]
+then
+    printf 'Invalid publish setting: %s\n' "${publish}" >&2
+    exit 2
+fi
+
+auth_file=$(mktemp)
+cleanup()
+{
+    rm -f "${auth_file}"
+}
+trap cleanup EXIT
+
+registry=${staging_image%%/*}
+aws ecr get-login-password --region "${AWS_REGION}" \
+    | skopeo login \
+        --authfile "${auth_file}" \
+        --username AWS \
+        --password-stdin \
+        "${registry}"
+
+image_digest()
+{
+    repository_uri=$1
+    tag=$2
+    repository_name=${repository_uri#*/}
+
+    aws ecr describe-images \
+        --region "${AWS_REGION}" \
+        --repository-name "${repository_name}" \
+        --image-ids "imageTag=${tag}" \
+        --query 'imageDetails[0].imageDigest' \
+        --output text 2>/dev/null
+}
+
+copy_image()
+{
+    source=$1
+    destination=$2
+    destination_tag=$3
+    immutable=$4
+
+    if ${immutable}
+    then
+        source_digest=$(image_digest "${source}" "${source_tag}")
+        if destination_digest=$(image_digest "${destination}" "${destination_tag}")
+        then
+            if [[ ${source_digest} != "${destination_digest}" ]]
+            then
+                printf 'Immutable image %s:%s already has different content.\n' \
+                    "${destination}" "${destination_tag}" >&2
+                exit 1
+            fi
+            return
+        fi
+    fi
+
+    skopeo copy \
+        --all \
+        --authfile "${auth_file}" \
+        --preserve-digests \
+        "docker://${source}:${source_tag}" \
+        "docker://${destination}:${destination_tag}"
+}
+
+promote_pair()
+{
+    staging=$1
+    candidate=$2
+    production=$3
+
+    if ${publish}
+    then
+        copy_image "${staging}" "${production}" "${content_tag}" false
+        copy_image "${staging}" "${production}" latest false
+    else
+        copy_image "${staging}" "${candidate}" "${content_tag}" true
+    fi
+}
+
+promote_pair "${staging_image}" "${candidate_image}" "${production_image}"
+promote_pair \
+    "${staging_unpruned_image}" \
+    "${candidate_unpruned_image}" \
+    "${production_unpruned_image}"
