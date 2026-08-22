@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+test_directory=$(mktemp -d)
+trusted_root="${test_directory}/trusted"
+mkdir -p "${trusted_root}/ci/aws"
+printf '%s\n' 1111111111111111111111111111111111111111 \
+    > "${trusted_root}/ci/aws/infrastructure-revision"
+printf '%s\n' 1 > "${trusted_root}/ci/aws/infrastructure-contract-version"
+
+cleanup()
+{
+    rm -rf "${test_directory}"
+}
+trap cleanup EXIT
+
+event_path="${test_directory}/event.json"
+jq --null-input \
+    --arg actor 'reaver-project-maintenance[bot]' \
+    --arg base 2222222222222222222222222222222222222222 \
+    '{pull_request: {base: {sha: $base}, user: {login: $actor}}}' \
+    > "${event_path}"
+
+run_selector()
+{
+    name=$1
+    source_ref=$2
+    output="${test_directory}/${name}.output"
+    GITHUB_EVENT_NAME=pull_request_target \
+    GITHUB_EVENT_PATH="${event_path}" \
+    GITHUB_OUTPUT="${output}" \
+    GITHUB_REPOSITORY=reaver-project/reaveros \
+    SOURCE_REF="${source_ref}" \
+    SOURCE_REPOSITORY=reaver-project/reaveros \
+    DEPLOYED_INFRASTRUCTURE_REVISION=3333333333333333333333333333333333333333 \
+    DEPLOYED_INFRASTRUCTURE_CONTRACT_VERSION=2 \
+    DEPLOYED_MAINTENANCE_APP_SLUG=reaver-project-maintenance \
+        "${self_dir}/select-infrastructure-contract" "${trusted_root}"
+    printf '%s\n' "${output}"
+}
+
+ordinary_output=$(run_selector ordinary feature/example)
+grep --fixed-strings --line-regexp \
+    'expected_revision=1111111111111111111111111111111111111111' \
+    "${ordinary_output}" >/dev/null
+grep --fixed-strings --line-regexp 'expected_contract_version=1' \
+    "${ordinary_output}" >/dev/null
+grep --fixed-strings --line-regexp 'base_revision=' "${ordinary_output}" >/dev/null
+
+automatic_output=$(run_selector automatic \
+    maintenance/infrastructure/3333333333333333333333333333333333333333)
+grep --fixed-strings --line-regexp \
+    'expected_revision=3333333333333333333333333333333333333333' \
+    "${automatic_output}" >/dev/null
+grep --fixed-strings --line-regexp 'expected_contract_version=2' \
+    "${automatic_output}" >/dev/null
+grep --fixed-strings --line-regexp \
+    'base_revision=2222222222222222222222222222222222222222' \
+    "${automatic_output}" >/dev/null
+
+jq '.pull_request.user.login = "impostor"' "${event_path}" \
+    > "${test_directory}/impostor.json"
+if GITHUB_EVENT_NAME=pull_request_target \
+    GITHUB_EVENT_PATH="${test_directory}/impostor.json" \
+    GITHUB_OUTPUT="${test_directory}/impostor.output" \
+    GITHUB_REPOSITORY=reaver-project/reaveros \
+    SOURCE_REF=maintenance/infrastructure/3333333333333333333333333333333333333333 \
+    SOURCE_REPOSITORY=reaver-project/reaveros \
+    DEPLOYED_INFRASTRUCTURE_REVISION=3333333333333333333333333333333333333333 \
+    DEPLOYED_INFRASTRUCTURE_CONTRACT_VERSION=2 \
+    DEPLOYED_MAINTENANCE_APP_SLUG=reaver-project-maintenance \
+        "${self_dir}/select-infrastructure-contract" "${trusted_root}" \
+        >/dev/null 2>&1
+then
+    printf 'An infrastructure update from the wrong actor was accepted.\n' >&2
+    exit 1
+fi
+
+printf 'Infrastructure contract selection tests passed.\n'

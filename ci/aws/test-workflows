@@ -47,9 +47,9 @@ mapfile -t infrastructure_references < <(
         's/^[[:space:]]*uses:[[:space:]]*(reaver-project\/infrastructure\/actions\/[^[:space:]#]+).*/\1/p' \
         "${workflow_files[@]}"
 )
-if [[ ${#infrastructure_references[@]} -ne 4 ]]
+if [[ ${#infrastructure_references[@]} -ne 5 ]]
 then
-    printf 'Expected four shared infrastructure action uses, found %s.\n' \
+    printf 'Expected five shared infrastructure action uses, found %s.\n' \
         "${#infrastructure_references[@]}" >&2
     exit 1
 fi
@@ -72,8 +72,9 @@ do
         "expected-contract-version: '${infrastructure_contract_version}'" \
         "${contract_consumer}"
     then
-        printf '%s does not require infrastructure contract version 1.\n' \
-            "${contract_consumer}" >&2
+        printf '%s does not require infrastructure contract version %s.\n' \
+            "${contract_consumer}" \
+            "${infrastructure_contract_version}" >&2
         exit 1
     fi
 done

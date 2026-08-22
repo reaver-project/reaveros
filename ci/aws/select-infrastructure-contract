@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $# -ne 1 \
+    || -z ${GITHUB_EVENT_NAME:-} \
+    || -z ${GITHUB_EVENT_PATH:-} \
+    || -z ${GITHUB_OUTPUT:-} \
+    || -z ${GITHUB_REPOSITORY:-} \
+    || -z ${SOURCE_REF:-} \
+    || -z ${SOURCE_REPOSITORY:-} ]]
+then
+    printf 'usage: %s <trusted-repository-root>\n' "$0" >&2
+    exit 2
+fi
+
+trusted_root=$1
+recorded_revision=$(<"${trusted_root}/ci/aws/infrastructure-revision")
+recorded_contract_version=$(<"${trusted_root}/ci/aws/infrastructure-contract-version")
+if [[ ! ${recorded_revision} =~ ^[0-9a-f]{40}$ \
+    || ! ${recorded_contract_version} =~ ^[1-9][0-9]*$ ]]
+then
+    printf 'The trusted branch records an invalid infrastructure contract.\n' >&2
+    exit 1
+fi
+
+base_revision=
+expected_revision=${recorded_revision}
+expected_contract_version=${recorded_contract_version}
+if [[ ${GITHUB_EVENT_NAME} == pull_request_target \
+    && ${SOURCE_REF} == maintenance/infrastructure/* ]]
+then
+    deployed_revision=${DEPLOYED_INFRASTRUCTURE_REVISION:-}
+    deployed_contract_version=${DEPLOYED_INFRASTRUCTURE_CONTRACT_VERSION:-}
+    maintenance_app_slug=${DEPLOYED_MAINTENANCE_APP_SLUG:-}
+    proposed_revision=${SOURCE_REF#maintenance/infrastructure/}
+    pull_request_actor=$(jq --exit-status --raw-output \
+        '.pull_request.user.login' "${GITHUB_EVENT_PATH}")
+    base_revision=$(jq --exit-status --raw-output \
+        '.pull_request.base.sha' "${GITHUB_EVENT_PATH}")
+
+    if [[ ${SOURCE_REPOSITORY} != "${GITHUB_REPOSITORY}" \
+        || ! ${deployed_revision} =~ ^[0-9a-f]{40}$ \
+        || ! ${deployed_contract_version} =~ ^[1-9][0-9]*$ \
+        || ! ${maintenance_app_slug} =~ ^[a-z0-9]+(-[a-z0-9]+)*$ \
+        || ${proposed_revision} != "${deployed_revision}" \
+        || ${pull_request_actor} != "${maintenance_app_slug}[bot]" \
+        || ! ${base_revision} =~ ^[0-9a-f]{40}$ ]]
+    then
+        printf 'Refusing an untrusted automatic infrastructure update.\n' >&2
+        exit 1
+    fi
+
+    expected_revision=${deployed_revision}
+    expected_contract_version=${deployed_contract_version}
+fi
+
+{
+    printf 'base_revision=%s\n' "${base_revision}"
+    printf 'expected_contract_version=%s\n' "${expected_contract_version}"
+    printf 'expected_revision=%s\n' "${expected_revision}"
+} >> "${GITHUB_OUTPUT}"
