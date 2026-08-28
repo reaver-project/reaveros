@@ -7,16 +7,7 @@ on:
     push:
         branches:
           - main
-    pull_request_target:
-        types:
-          - closed
-          - converted_to_draft
-          - labeled
-          - opened
-          - ready_for_review
-          - reopened
-          - synchronize
-          - unlabeled
+          - pull-request/*
     schedule:
       - cron: '0 4 * * 0'
     workflow_dispatch:
@@ -39,11 +30,12 @@ jobs:
 
         permissions:
             contents: read
-            issues: write
+            pull-requests: read
 
         outputs:
             approved: ${{ steps.authorize.outputs.approved }}
             publish_cache: ${{ steps.authorize.outputs.publish_cache }}
+            pull_request_number: ${{ steps.authorize.outputs.pull_request_number }}
             reason: ${{ steps.authorize.outputs.reason }}
             refresh_cache: ${{ steps.authorize.outputs.refresh_cache }}
             source_ref: ${{ steps.authorize.outputs.source_ref }}
@@ -70,7 +62,7 @@ jobs:
             id: authorize
             env:
                 GH_TOKEN: ${{ github.token }}
-                REAVEROS_AWS_CI_TRUSTED_USERS: ${{ vars.AWS_CI_TRUSTED_USERS }}
+                REAVEROS_CI_GATE_APP_SLUG: ${{ vars.CI_GATE_APP_SLUG }}
             run: ./ci/aws/authorize
 
           - name: Summarize authorization
@@ -93,6 +85,10 @@ jobs:
         needs: authorize
         runs-on: ubuntu-latest
         timeout-minutes: 10
+
+        permissions:
+            contents: read
+            pull-requests: read
 
         steps:
           - name: Check out the trusted consumer policy
@@ -117,8 +113,11 @@ jobs:
                 DEPLOYED_INFRASTRUCTURE_CONTRACT_VERSION: ${{ vars.AWS_INFRASTRUCTURE_CONTRACT_VERSION }}
                 DEPLOYED_INFRASTRUCTURE_REVISION: ${{ vars.AWS_INFRASTRUCTURE_REVISION }}
                 DEPLOYED_MAINTENANCE_APP_SLUG: ${{ vars.MAINTENANCE_APP_SLUG }}
+                GH_TOKEN: ${{ github.token }}
+                PULL_REQUEST_NUMBER: ${{ needs.authorize.outputs.pull_request_number }}
                 SOURCE_REF: ${{ needs.authorize.outputs.source_ref }}
                 SOURCE_REPOSITORY: ${{ needs.authorize.outputs.source_repository }}
+                SOURCE_SHA: ${{ needs.authorize.outputs.source_sha }}
             run: trusted/ci/aws/select-infrastructure-contract trusted
 
           - name: Validate the requested infrastructure consumer
@@ -461,39 +460,4 @@ jobs:
                 if [[ ${failed:-false} == true ]]
                 then
                     exit 1
-                fi
-
-    automerge:
-        name: Auto-merge if PR is automatic
-        if: github.event_name == 'pull_request_target'
-        needs: result
-        runs-on: ubuntu-latest
-        timeout-minutes: 10
-
-        permissions:
-            contents: write
-            pull-requests: write
-
-        steps:
-          - name: Merge the PR if automatic
-            env:
-                GH_TOKEN: ${{ github.token }}
-            run: |
-                set -euo pipefail
-                url=$(jq -r '.pull_request.html_url' "${GITHUB_EVENT_PATH}")
-                sha=$(jq -r '.pull_request.head.sha' "${GITHUB_EVENT_PATH}")
-                head_ref=$(jq -r '.pull_request.head.ref' "${GITHUB_EVENT_PATH}")
-                head_repo=$(jq -r '.pull_request.head.repo.full_name' "${GITHUB_EVENT_PATH}")
-
-                if jq -e \
-                    '.pull_request.labels | any(.name == "automatic: toolchain update")' \
-                    "${GITHUB_EVENT_PATH}" >/dev/null \
-                   && [[ ${head_repo} == "${GITHUB_REPOSITORY}" ]] \
-                   && [[ ${head_ref} == maintenance/update/*/* ]]
-                then
-                    gh -R "${GITHUB_REPOSITORY}" pr merge "${url}" \
-                        --auto \
-                        --rebase \
-                        --delete-branch \
-                        --match-head-commit "${sha}"
                 fi

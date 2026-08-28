@@ -2,11 +2,16 @@
 
 set -euo pipefail
 
+if [[ $(basename -- "$0") == gh ]]
+then
+    printf '%s\n' "${AUTHORIZE_TEST_PULL_REQUEST}"
+    exit
+fi
+
 self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 test_directory=$(mktemp -d)
 mkdir "${test_directory}/bin"
-printf '#!/usr/bin/env bash\nexit 0\n' > "${test_directory}/bin/gh"
-chmod +x "${test_directory}/bin/gh"
+ln -s "${self_dir}/test-authorize" "${test_directory}/bin/gh"
 export PATH="${test_directory}/bin:${PATH}"
 
 cleanup()
@@ -15,177 +20,95 @@ cleanup()
 }
 trap cleanup EXIT
 
+event_path="${test_directory}/event.json"
+jq --null-input \
+    '{repository: {default_branch: "main"}, inputs: {refresh_build_environment: "false"}}' \
+    > "${event_path}"
+
+current_sha=0123456789abcdef0123456789abcdef01234567
+export AUTHORIZE_TEST_PULL_REQUEST
+AUTHORIZE_TEST_PULL_REQUEST=$(jq --null-input --compact-output \
+    --arg sha "${current_sha}" \
+    '{
+        draft: false,
+        head: {
+            ref: "feature/example",
+            repo: {full_name: "contributor/reaveros"},
+            sha: $sha
+        },
+        state: "open"
+    }')
+
 run_case()
 {
     name=$1
-    expected=$2
-    event=$3
-    expected_repository=${4:-}
-    event_path="${test_directory}/${name}.json"
+    event_name=$2
+    source_ref=$3
+    source_sha=$4
+    actor=$5
+    expected_approved=$6
+    expected_publish=$7
+    expected_source_ref=$8
+    expected_pull_request_number=$9
     output_path="${test_directory}/${name}.output"
 
-    printf '%s\n' "${event}" > "${event_path}"
-    GITHUB_EVENT_NAME=pull_request_target \
-    GITHUB_EVENT_PATH="${event_path}" \
-    GITHUB_OUTPUT="${output_path}" \
-    GITHUB_REF_NAME=main \
-    GITHUB_REPOSITORY=reaver-project/reaveros \
-    GITHUB_SHA=base \
-        "${self_dir}/authorize" >/dev/null
-
-    actual=$(awk -F= '/^approved=/{ print $2 }' "${output_path}")
-    actual_repository=$(awk -F= '/^source_repository=/{ print $2 }' "${output_path}")
-    if [[ ${actual} != "${expected}" \
-        || ( -n ${expected_repository} \
-            && ${actual_repository} != "${expected_repository}" ) ]]
-    then
-        printf '%s: expected approved=%s, repository=%s; got %s, %s\n' \
-            "${name}" \
-            "${expected}" \
-            "${expected_repository}" \
-            "${actual}" \
-            "${actual_repository}" >&2
-        exit 1
-    fi
-}
-
-run_dispatch_case()
-{
-    source_ref=$1
-    expected_approved=$2
-    expected_publish=$3
-    event_path="${test_directory}/dispatch-${source_ref}.json"
-    output_path="${test_directory}/dispatch-${source_ref}.output"
-
-    jq --null-input \
-        --arg default_branch main \
-        '{inputs: {refresh_build_environment: "false"}, repository: {default_branch: $default_branch}}' \
-        > "${event_path}"
-    GITHUB_EVENT_NAME=workflow_dispatch \
+    GITHUB_ACTOR="${actor}" \
+    GITHUB_EVENT_NAME="${event_name}" \
     GITHUB_EVENT_PATH="${event_path}" \
     GITHUB_OUTPUT="${output_path}" \
     GITHUB_REF_NAME="${source_ref}" \
     GITHUB_REPOSITORY=reaver-project/reaveros \
-    GITHUB_SHA=dispatch \
+    GITHUB_SHA="${source_sha}" \
+    REAVEROS_CI_GATE_APP_SLUG=reaver-project-ci-gate \
         "${self_dir}/authorize" >/dev/null
 
     actual_approved=$(awk -F= '/^approved=/{ print $2 }' "${output_path}")
     actual_publish=$(awk -F= '/^publish_cache=/{ print $2 }' "${output_path}")
-    if [[ ${actual_approved} != "${expected_approved}" ]] \
-        || [[ ${actual_publish} != "${expected_publish}" ]]
+    actual_source_ref=$(awk -F= '/^source_ref=/{ print $2 }' "${output_path}")
+    actual_pull_request_number=$(awk -F= \
+        '/^pull_request_number=/{ print $2 }' "${output_path}")
+    if [[ ${actual_approved} != "${expected_approved}" \
+        || ${actual_publish} != "${expected_publish}" \
+        || ${actual_source_ref} != "${expected_source_ref}" \
+        || ${actual_pull_request_number} != "${expected_pull_request_number}" ]]
     then
-        printf '%s\n' \
-            "dispatch-${source_ref}: expected approved=${expected_approved}, publish_cache=${expected_publish};" \
-            "    got approved=${actual_approved}, publish_cache=${actual_publish}" >&2
+        printf '%s: expected %s/%s/%s/%s, got %s/%s/%s/%s\n' \
+            "${name}" \
+            "${expected_approved}" \
+            "${expected_publish}" \
+            "${expected_source_ref}" \
+            "${expected_pull_request_number}" \
+            "${actual_approved}" \
+            "${actual_publish}" \
+            "${actual_source_ref}" \
+            "${actual_pull_request_number}" >&2
         exit 1
     fi
 }
 
-same_repository=$(jq --null-input --compact-output '{
-    action: "opened",
-    pull_request: {
-        author_association: "NONE",
-        draft: false,
-        head: {ref: "feature", repo: {full_name: "reaver-project/reaveros"}, sha: "abc"},
-        labels: [],
-        number: 1,
-        user: {login: "automation"}
-    }
-}')
-run_case same-repository true "${same_repository}" reaver-project/reaveros
+run_case main push main "${current_sha}" griwes true true main ''
+run_case copied push pull-request/17 "${current_sha}" \
+    'reaver-project-ci-gate[bot]' true false feature/example 17
+run_case wrong-actor push pull-request/17 "${current_sha}" griwes \
+    false false pull-request/17 17
+run_case feature-push push feature/example "${current_sha}" griwes \
+    false false feature/example ''
+run_case schedule schedule main "${current_sha}" github true true main ''
+run_case dispatch-main workflow_dispatch main "${current_sha}" griwes \
+    true true main ''
+run_case dispatch-feature workflow_dispatch feature/example "${current_sha}" griwes \
+    false false feature/example ''
 
-collaborator_fork=$(jq --null-input --compact-output '{
-    action: "opened",
-    pull_request: {
-        author_association: "COLLABORATOR",
-        draft: false,
-        head: {ref: "feature", repo: {full_name: "collaborator/reaveros"}, sha: "def"},
-        labels: [],
-        number: 2,
-        user: {login: "collaborator"}
-    }
-}')
-run_case collaborator-fork true "${collaborator_fork}" collaborator/reaveros
+AUTHORIZE_TEST_PULL_REQUEST=$(jq \
+    '.head.sha = "fedcba9876543210fedcba9876543210fedcba98"' \
+    <<< "${AUTHORIZE_TEST_PULL_REQUEST}")
+run_case stale push pull-request/17 "${current_sha}" \
+    'reaver-project-ci-gate[bot]' false false pull-request/17 17
 
-approved_external=$(jq --null-input --compact-output '{
-    action: "reopened",
-    pull_request: {
-        author_association: "NONE",
-        draft: false,
-        head: {ref: "feature", repo: {full_name: "external/reaveros"}, sha: "ghi"},
-        labels: [{name: "ci: aws-approved"}],
-        number: 3,
-        user: {login: "external"}
-    }
-}')
-run_case approved-external true "${approved_external}"
-
-unapproved_external=$(jq --null-input --compact-output '{
-    action: "opened",
-    pull_request: {
-        author_association: "NONE",
-        draft: false,
-        head: {ref: "feature", repo: {full_name: "external/reaveros"}, sha: "jkl"},
-        labels: [],
-        number: 4,
-        user: {login: "external"}
-    }
-}')
-run_case unapproved-external false "${unapproved_external}"
-
-missing_fork=$(jq --null-input --compact-output '{
-    action: "opened",
-    pull_request: {
-        author_association: "MEMBER",
-        draft: false,
-        head: {ref: "feature", repo: null, sha: "missing"},
-        labels: [],
-        number: 8,
-        user: {login: "member"}
-    }
-}')
-run_case missing-fork false "${missing_fork}"
-
-closed_same_repository=$(jq --null-input --compact-output '{
-    action: "closed",
-    pull_request: {
-        author_association: "MEMBER",
-        draft: false,
-        head: {ref: "feature", repo: {full_name: "reaver-project/reaveros"}, sha: "closed"},
-        labels: [],
-        number: 7,
-        user: {login: "member"}
-    }
-}')
-run_case closed-same-repository false "${closed_same_repository}"
-
-updated_external=$(jq --null-input --compact-output '{
-    action: "synchronize",
-    pull_request: {
-        author_association: "NONE",
-        draft: false,
-        head: {ref: "feature", repo: {full_name: "external/reaveros"}, sha: "mno"},
-        labels: [{name: "ci: aws-approved"}],
-        number: 5,
-        user: {login: "external"}
-    }
-}')
-run_case updated-external false "${updated_external}"
-
-updated_same_repository=$(jq --null-input --compact-output '{
-    action: "synchronize",
-    pull_request: {
-        author_association: "NONE",
-        draft: false,
-        head: {ref: "feature", repo: {full_name: "reaver-project/reaveros"}, sha: "pqr"},
-        labels: [{name: "ci: aws-approved"}],
-        number: 6,
-        user: {login: "automation"}
-    }
-}')
-run_case updated-same-repository true "${updated_same_repository}"
-
-run_dispatch_case main true true
-run_dispatch_case feature false false
+AUTHORIZE_TEST_PULL_REQUEST=$(jq \
+    '.head.sha = "0123456789abcdef0123456789abcdef01234567" | .draft = true' \
+    <<< "${AUTHORIZE_TEST_PULL_REQUEST}")
+run_case draft push pull-request/17 "${current_sha}" \
+    'reaver-project-ci-gate[bot]' false false pull-request/17 17
 
 printf 'AWS CI authorization tests passed.\n'
