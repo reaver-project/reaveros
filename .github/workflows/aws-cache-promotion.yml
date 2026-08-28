@@ -31,14 +31,14 @@ jobs:
     promote:
         name: Promote validated build environment
         runs-on: ubuntu-latest
-        timeout-minutes: 10
+        timeout-minutes: 15
 
         outputs:
             content_tag: ${{ steps.content.outputs.content_tag }}
 
         permissions:
             contents: read
-            id-token: write
+            id-token: write # Authenticate to the narrowly scoped AWS promotion role.
 
         steps:
           - name: Check out trusted cache helpers
@@ -76,16 +76,24 @@ jobs:
 
           - name: Promote the cache
             env:
+                BUILD_ENVIRONMENT: ${{ fromJSON(steps.stack.outputs.outputs).BuildEnvironmentRepositoryUri }}
+                CANDIDATE_BUILD_ENVIRONMENT: ${{ fromJSON(steps.stack.outputs.outputs).CandidateBuildEnvironmentRepositoryUri }}
+                CANDIDATE_UNPRUNED_BUILD_ENVIRONMENT: ${{ fromJSON(steps.stack.outputs.outputs).CandidateUnprunedBuildEnvironmentRepositoryUri }}
+                CONTENT_TAG: ${{ steps.content.outputs.content_tag }}
                 AWS_REGION: ${{ vars.AWS_REGION }}
                 PUBLISH_CACHE: ${{ inputs.publish_cache && github.event_name != 'pull_request_target' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+                SOURCE_TAG: ${{ inputs.source_tag }}
+                STAGING_BUILD_ENVIRONMENT: ${{ fromJSON(steps.stack.outputs.outputs).StagingBuildEnvironmentRepositoryUri }}
+                STAGING_UNPRUNED_BUILD_ENVIRONMENT: ${{ fromJSON(steps.stack.outputs.outputs).StagingUnprunedBuildEnvironmentRepositoryUri }}
+                UNPRUNED_BUILD_ENVIRONMENT: ${{ fromJSON(steps.stack.outputs.outputs).UnprunedBuildEnvironmentRepositoryUri }}
             run: |
                 ./ci/aws/promote-build-environment \
-                    '${{ fromJSON(steps.stack.outputs.outputs).StagingBuildEnvironmentRepositoryUri }}' \
-                    '${{ fromJSON(steps.stack.outputs.outputs).StagingUnprunedBuildEnvironmentRepositoryUri }}' \
-                    '${{ fromJSON(steps.stack.outputs.outputs).CandidateBuildEnvironmentRepositoryUri }}' \
-                    '${{ fromJSON(steps.stack.outputs.outputs).CandidateUnprunedBuildEnvironmentRepositoryUri }}' \
-                    '${{ fromJSON(steps.stack.outputs.outputs).BuildEnvironmentRepositoryUri }}' \
-                    '${{ fromJSON(steps.stack.outputs.outputs).UnprunedBuildEnvironmentRepositoryUri }}' \
-                    '${{ inputs.source_tag }}' \
-                    '${{ steps.content.outputs.content_tag }}' \
+                    "${STAGING_BUILD_ENVIRONMENT}" \
+                    "${STAGING_UNPRUNED_BUILD_ENVIRONMENT}" \
+                    "${CANDIDATE_BUILD_ENVIRONMENT}" \
+                    "${CANDIDATE_UNPRUNED_BUILD_ENVIRONMENT}" \
+                    "${BUILD_ENVIRONMENT}" \
+                    "${UNPRUNED_BUILD_ENVIRONMENT}" \
+                    "${SOURCE_TAG}" \
+                    "${CONTENT_TAG}" \
                     "${PUBLISH_CACHE}"

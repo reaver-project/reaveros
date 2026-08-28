@@ -44,6 +44,59 @@ then
     exit 2
 fi
 
+verify_image_scan()
+{
+    repository_uri=$1
+    repository_name=${repository_uri#*/}
+
+    if ! aws ecr wait image-scan-complete \
+        --region "${AWS_REGION}" \
+        --repository-name "${repository_name}" \
+        --image-id "imageTag=${source_tag}"
+    then
+        printf 'Image vulnerability scan did not complete for %s:%s.\n' \
+            "${repository_uri}" "${source_tag}" >&2
+        return 1
+    fi
+
+    if ! severity_counts=$(aws ecr describe-image-scan-findings \
+        --region "${AWS_REGION}" \
+        --repository-name "${repository_name}" \
+        --image-id "imageTag=${source_tag}" \
+        --query imageScanFindings.findingSeverityCounts \
+        --output json)
+    then
+        printf 'Could not read image vulnerability findings for %s:%s.\n' \
+            "${repository_uri}" "${source_tag}" >&2
+        return 1
+    fi
+
+    critical_findings=$(jq --exit-status --raw-output \
+        '.CRITICAL // 0 | numbers' <<< "${severity_counts}")
+    high_findings=$(jq --exit-status --raw-output \
+        '.HIGH // 0 | numbers' <<< "${severity_counts}")
+
+    printf 'Image scan for %s:%s found %s critical and %s high severity vulnerabilities.\n' \
+        "${repository_uri}" \
+        "${source_tag}" \
+        "${critical_findings}" \
+        "${high_findings}"
+
+    if ((critical_findings != 0))
+    then
+        printf 'Refusing to promote an image with critical vulnerabilities.\n' >&2
+        return 1
+    fi
+    if ((high_findings != 0))
+    then
+        printf '::warning::The promoted build image contains %s high severity vulnerabilities.\n' \
+            "${high_findings}"
+    fi
+}
+
+verify_image_scan "${staging_image}"
+verify_image_scan "${staging_unpruned_image}"
+
 auth_file=$(mktemp)
 cleanup()
 {

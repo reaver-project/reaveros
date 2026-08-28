@@ -60,6 +60,7 @@ jobs:
           - name: Test the trusted CI policy
             run: |
                 ./ci/aws/test-authorize
+                ./ci/aws/test-promote-build-environment
                 ./ci/aws/test-select-infrastructure-contract
                 ./ci/aws/test-workflows
                 ./ci/test-build-image

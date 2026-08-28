@@ -69,6 +69,10 @@ repositories for pull requests or to mutable production repositories for the
 protected branch. Production images are then copied to both the content tag
 and `latest` in GHCR, for both pruned and unpruned variants.
 
+Promotion waits for the ECR scan-on-push result for both variants. A missing or
+failed scan and any critical-severity finding block promotion; high-severity
+findings remain visible as workflow warnings without preventing cache reuse.
+
 `docker/toolchain-key` hashes tracked CMake, Docker, and toolchain inputs by
 path, index mode, and content. This includes the local patch set, so a patched
 tool cannot collide with its unpatched upstream version.
