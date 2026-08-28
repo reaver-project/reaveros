@@ -16,24 +16,35 @@ repository variables:
   reviewed change set was deployed;
 - `AWS_REGION`;
 - `AWS_RUNNER_STACK_NAME`;
-- `AWS_RUNNER_ROLE_ARN`; and
+- `AWS_RUNNER_ROLE_ARN`;
+- `CI_GATE_APP_SLUG` identifies the App allowed to publish an admitted revision
+  to a protected CI branch; and
 - `MAINTENANCE_APP_SLUG` identifies the App allowed to publish automatic
   infrastructure updates.
 
 The infrastructure deployment publishes those variables through its
 infrastructure GitHub App, then uses its repository-scoped Maintenance App to
 open a PR updating the recorded values and shared-action pins. The App enables
-auto-merge but cannot bypass repository rules. `AWS_CI_TRUSTED_USERS` remains
-ReaverOS-owned and is a comma-separated list of additional GitHub logins whose
-pull requests may use AWS automatically.
+auto-merge but cannot bypass repository rules.
 
 ## Authorization
 
-`ci.yml` runs as `pull_request_target` so its authorization and provisioning
-logic always comes from the protected default branch. It never executes pull
-request code on a GitHub-hosted runner. The selected head SHA is passed into a
-reusable workflow and checked out only on a newly provisioned, one-job AWS
-runner.
+The CI Gate App receives pull-request and issue-comment webhooks. Revisions from
+configured automatic actors on same-repository branches are admitted directly.
+Other revisions require an exact maintainer comment of the form
+`/ok to test <abbreviated-sha>`, where the abbreviation contains at least seven
+hexadecimal characters. The controller resolves that name through GitHub and
+requires the resulting full object ID to equal the pull request's current open,
+non-draft head.
+
+An admission copies the full commit object to `pull-request/<number>`. Repository
+rules reserve creation, update, and deletion of that namespace for the CI Gate
+App. `ci.yml` runs on pushes to those branches, while AWS OIDC trusts only that
+App-reserved namespace and the protected default branch. The GitHub-hosted
+preflight checks out its policy from the default branch, queries the pull request
+again, and rejects a copied SHA that has gone stale before provisioning. The
+candidate is then checked out by full SHA from this repository on each newly
+provisioned, one-job AWS runner.
 
 Before provisioning any runner, the trusted workflow validates the selected
 revision as an infrastructure consumer. Ordinary revisions must retain the
@@ -43,11 +54,11 @@ Maintenance App identity and match the deployment-published revision and stack
 version. The shared validator also proves that an automatic update changes no
 files or workflow content beyond exact action-pin and contract substitutions.
 
-Pushes and scheduled runs on the protected default branch are approved.
-Same-repository branches, organization members, collaborators, and explicitly
-listed trusted users are approved automatically. Other external revisions need
-the `ci: aws-approved` label; `authorize` removes that label on every new head
-revision so approval cannot carry across a force-push or update.
+Pushes and scheduled runs on the protected default branch are approved and may
+publish caches. Copied pull-request revisions may populate candidate caches but
+cannot publish production images. A new pull-request head invalidates the old
+approval: the controller removes or replaces the copied branch, and both trusted
+preflight checks compare it with the current PR before any AWS runner starts.
 
 The ReaverOS workflow receives only a narrow OIDC role. It does not receive the
 Runner App key. The infrastructure controller owns JIT registration, stores
