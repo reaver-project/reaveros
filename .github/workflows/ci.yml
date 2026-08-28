@@ -61,6 +61,7 @@ jobs:
             run: |
                 ./ci/aws/test-authorize
                 ./ci/aws/test-promote-build-environment
+                ./ci/aws/test-publish-build-environment
                 ./ci/aws/test-select-infrastructure-contract
                 ./ci/aws/test-workflows
                 ./ci/test-build-image

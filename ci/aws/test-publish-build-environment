@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $(basename -- "$0") == aws ]]
+then
+    {
+        printf 'aws'
+        printf '\t%s' "$@"
+        printf '\n'
+    } >> "${PUBLISH_TEST_LOG}"
+    if [[ $1 == ecr && $2 == get-login-password ]]
+    then
+        printf 'password\n'
+        exit
+    fi
+    printf 'Unexpected AWS call: %s %s\n' "$1" "$2" >&2
+    exit 2
+fi
+
+if [[ $(basename -- "$0") == skopeo ]]
+then
+    {
+        printf 'skopeo'
+        printf '\t%s' "$@"
+        printf '\n'
+    } >> "${PUBLISH_TEST_LOG}"
+    if [[ $1 == login ]]
+    then
+        cat > /dev/null
+    fi
+    exit
+fi
+
+self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+test_directory=$(mktemp -d)
+mkdir "${test_directory}/bin"
+ln -s "${self_dir}/test-publish-build-environment" "${test_directory}/bin/aws"
+ln -s "${self_dir}/test-publish-build-environment" "${test_directory}/bin/skopeo"
+export PATH="${test_directory}/bin:${PATH}"
+export AWS_REGION=us-west-2
+export GHCR_TOKEN=example-token
+export GITHUB_ACTOR=reaver-project
+export PUBLISH_TEST_LOG="${test_directory}/calls"
+: > "${PUBLISH_TEST_LOG}"
+
+cleanup()
+{
+    rm -rf "${test_directory}"
+}
+trap cleanup EXIT
+
+content_tag=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+"${self_dir}/publish-build-environment" \
+    registry.example/reaveros \
+    registry.example/reaveros-unpruned \
+    ghcr.io/reaver-project/reaveros-build-env \
+    ghcr.io/reaver-project/reaveros-build-env/unpruned \
+    "${content_tag}"
+
+assert_log_count()
+{
+    expected=$1
+    pattern=$2
+    actual=$(grep --fixed-strings --count "${pattern}" "${PUBLISH_TEST_LOG}" || true)
+    if [[ ${actual} -ne ${expected} ]]
+    then
+        printf 'Expected %s calls matching %s, found %s.\n' \
+            "${expected}" "${pattern}" "${actual}" >&2
+        cat "${PUBLISH_TEST_LOG}" >&2
+        exit 1
+    fi
+}
+
+assert_log_count 1 $'aws\tecr\tget-login-password'
+assert_log_count 2 $'skopeo\tlogin'
+assert_log_count 4 $'skopeo\tcopy'
+
+: > "${PUBLISH_TEST_LOG}"
+if "${self_dir}/publish-build-environment" \
+    registry.example/reaveros \
+    registry.example/reaveros-unpruned \
+    ghcr.io/reaver-project/reaveros-build-env \
+    ghcr.io/reaver-project/reaveros-build-env/unpruned \
+    invalid > /dev/null 2>&1
+then
+    printf 'Publication accepted an invalid content tag.\n' >&2
+    exit 1
+fi
+if [[ -s ${PUBLISH_TEST_LOG} ]]
+then
+    printf 'Publication contacted a registry after rejecting its input.\n' >&2
+    exit 1
+fi
+
+printf 'Build-environment publication tests passed.\n'

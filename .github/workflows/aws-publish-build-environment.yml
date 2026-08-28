@@ -20,10 +20,15 @@ jobs:
 
         permissions:
             contents: read
-            id-token: write
-            packages: write
+            id-token: write # Authenticate to the read-only AWS image role.
+            packages: write # Copy validated images into GHCR.
 
         steps:
+          - name: Check out the publication helper
+            uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+            with:
+                persist-credentials: false
+
           - name: Read the AWS infrastructure contract
             id: stack
             uses: reaver-project/infrastructure/actions/aws-stack-contract@8de857166f5b24448bd9e4121ae06cd5e6bc97be
@@ -47,51 +52,9 @@ jobs:
                 GHCR_TOKEN: ${{ github.token }}
                 UNPRUNED_BUILD_ENVIRONMENT: ${{ fromJSON(steps.stack.outputs.outputs).UnprunedBuildEnvironmentRepositoryUri }}
             run: |
-                set -euo pipefail
-                if [[ ! ${CONTENT_TAG} =~ ^[0-9a-f]{64}$ ]]
-                then
-                    printf 'Invalid content tag: %s\n' "${CONTENT_TAG}" >&2
-                    exit 2
-                fi
-
-                auth_file=$(mktemp)
-                cleanup()
-                {
-                    rm -f "${auth_file}"
-                }
-                trap cleanup EXIT
-
-                registry=${BUILD_ENVIRONMENT%%/*}
-                aws ecr get-login-password --region "${AWS_REGION}" \
-                    | skopeo login \
-                        --authfile "${auth_file}" \
-                        --username AWS \
-                        --password-stdin \
-                        "${registry}"
-                printf '%s' "${GHCR_TOKEN}" \
-                    | skopeo login \
-                        --authfile "${auth_file}" \
-                        --username "${GITHUB_ACTOR}" \
-                        --password-stdin \
-                        ghcr.io
-
-                copy_image()
-                {
-                    source=$1
-                    destination=$2
-                    for destination_tag in "${CONTENT_TAG}" latest
-                    do
-                        skopeo copy \
-                            --all \
-                            --authfile "${auth_file}" \
-                            "docker://${source}:${CONTENT_TAG}" \
-                            "docker://${destination}:${destination_tag}"
-                    done
-                }
-
-                copy_image \
+                ./ci/aws/publish-build-environment \
                     "${BUILD_ENVIRONMENT}" \
-                    ghcr.io/reaver-project/reaveros-build-env
-                copy_image \
                     "${UNPRUNED_BUILD_ENVIRONMENT}" \
-                    ghcr.io/reaver-project/reaveros-build-env/unpruned
+                    ghcr.io/reaver-project/reaveros-build-env \
+                    ghcr.io/reaver-project/reaveros-build-env/unpruned \
+                    "${CONTENT_TAG}"
