@@ -61,10 +61,10 @@ jobs:
 
           - name: Read the AWS infrastructure contract
             id: stack
-            uses: reaver-project/infrastructure/actions/aws-stack-contract@8de857166f5b24448bd9e4121ae06cd5e6bc97be
+            uses: reaver-project/infrastructure/actions/aws-stack-contract@351d6eef21c212ba653d5b7179cbbab6e93856ac
             with:
                 aws-region: ${{ vars.AWS_REGION }}
-                expected-contract-version: '1'
+                expected-contract-version: '2'
                 role-arn: ${{ vars.AWS_RUNNER_ROLE_ARN }}
                 role-session-name: reaveros-${{ github.run_id }}-promote
                 stack-name: ${{ vars.AWS_RUNNER_STACK_NAME }}
