@@ -33,7 +33,7 @@ ReaverOS builds the full toolchain that it uses for all builds internally, at ve
 build ReaverOS, you need internet access to fetch the repositories for the entire toolchain.
 
 This also means that an initial build using a given toolchain will take a long time, because it will build full LLVM.
-Two docker images containing pre-built binaries are available:
+CI publishes two Docker images containing pre-built binaries:
 
 * `ghcr.io/reaver-project/reaveros-build-env` contains just the necessary files, and not the toolchain checkouts and build directories
 (for mechanics of this, see notes about `prune` targets below). This has an advantage of making the image smaller, but will

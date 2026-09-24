@@ -22,10 +22,10 @@ repository variables:
 - `MAINTENANCE_APP_SLUG` identifies the App allowed to publish automatic
   infrastructure updates.
 
-The infrastructure deployment publishes those variables through its
-infrastructure GitHub App, then uses its repository-scoped Maintenance App to
-open a PR updating the recorded values and shared-action pins. The App enables
-auto-merge but cannot bypass repository rules.
+The infrastructure deployment publishes these variables through its
+infrastructure GitHub App. Its Maintenance App proposes a matching update to
+the recorded contract and shared-action pins; repository rules still apply to
+that pull request.
 
 ## Authorization
 
@@ -96,6 +96,5 @@ ci/aws/test-workflows
 ```
 
 A breaking shared-action, stack-output, OIDC-trust, or ownership change must
-increment the infrastructure contract. Every successful stack deployment,
-breaking or compatible, publishes an automatic update to the exact deployed
-infrastructure revision.
+increment the infrastructure contract. The recorded infrastructure revision
+and every shared-action pin must identify the same deployed change.
