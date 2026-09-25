@@ -141,4 +141,21 @@ then
     exit 1
 fi
 
+for reusable_workflow in \
+    "${repo_root}/.github/workflows/aws-runner.yml" \
+    "${repo_root}/.github/workflows/aws-cache-promotion.yml"
+do
+    if grep --extended-regexp --quiet \
+        'inputs\.source_(sha|repository)' "${reusable_workflow}" \
+        || ! grep --fixed-strings --quiet \
+            'repository: ${{ github.repository }}' "${reusable_workflow}" \
+        || ! grep --fixed-strings --quiet \
+            'ref: ${{ github.sha }}' "${reusable_workflow}"
+    then
+        printf '%s must check out the caller commit, not a caller-supplied revision.\n' \
+            "${reusable_workflow}" >&2
+        exit 1
+    fi
+done
+
 printf 'AWS CI workflow policy tests passed.\n'

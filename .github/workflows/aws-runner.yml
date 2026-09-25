@@ -21,14 +21,6 @@ on:
                 description: Fixed runner class, either medium or large
                 required: true
                 type: string
-            source_sha:
-                description: Commit to validate on the ephemeral runner
-                required: true
-                type: string
-            source_repository:
-                description: Repository containing the revision to validate
-                required: true
-                type: string
             target:
                 description: Architecture or image selected by the caller matrix
                 default: ''
@@ -141,8 +133,8 @@ jobs:
           - name: Check out the requested revision
             uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
             with:
-                repository: ${{ inputs.source_repository }}
-                ref: ${{ inputs.source_sha }}
+                repository: ${{ github.repository }}
+                ref: ${{ github.sha }}
                 persist-credentials: false
 
           - name: Configure the build-environment cache

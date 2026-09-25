@@ -193,8 +193,6 @@ jobs:
             defer_llvm: true
             refresh_cache: ${{ needs.authorize.outputs.refresh_cache == 'true' }}
             runner_size: medium
-            source_sha: ${{ needs.authorize.outputs.source_sha }}
-            source_repository: ${{ needs.authorize.outputs.source_repository }}
             task: prepare
 
     build-environment-large:
@@ -211,8 +209,6 @@ jobs:
             cache_tag: run-${{ github.run_id }}-${{ github.run_attempt }}
             refresh_cache: ${{ needs.authorize.outputs.refresh_cache == 'true' }}
             runner_size: large
-            source_sha: ${{ needs.authorize.outputs.source_sha }}
-            source_repository: ${{ needs.authorize.outputs.source_repository }}
             task: prepare
 
     build-environment-ready:
@@ -271,8 +267,6 @@ jobs:
         with:
             cache_tag: run-${{ github.run_id }}-${{ github.run_attempt }}
             runner_size: medium
-            source_sha: ${{ needs.authorize.outputs.source_sha }}
-            source_repository: ${{ needs.authorize.outputs.source_repository }}
             target: ${{ matrix.arch }}
             task: build-dependencies
 
@@ -293,8 +287,6 @@ jobs:
         with:
             cache_tag: run-${{ github.run_id }}-${{ github.run_attempt }}
             runner_size: medium
-            source_sha: ${{ needs.authorize.outputs.source_sha }}
-            source_repository: ${{ needs.authorize.outputs.source_repository }}
             target: ${{ matrix.arch }}
             task: unit-tests
 
@@ -315,8 +307,6 @@ jobs:
         with:
             cache_tag: run-${{ github.run_id }}-${{ github.run_attempt }}
             runner_size: medium
-            source_sha: ${{ needs.authorize.outputs.source_sha }}
-            source_repository: ${{ needs.authorize.outputs.source_repository }}
             target: ${{ matrix.image }}
             task: image
 
@@ -338,8 +328,6 @@ jobs:
         with:
             cache_tag: run-${{ github.run_id }}-${{ github.run_attempt }}
             runner_size: medium
-            source_sha: ${{ needs.authorize.outputs.source_sha }}
-            source_repository: ${{ needs.authorize.outputs.source_repository }}
             target: ${{ matrix.image }}
             task: boot
 
@@ -359,8 +347,6 @@ jobs:
         uses: ./.github/workflows/aws-cache-promotion.yml
         with:
             publish_cache: ${{ needs.authorize.outputs.publish_cache == 'true' }}
-            source_sha: ${{ needs.authorize.outputs.source_sha }}
-            source_repository: ${{ needs.authorize.outputs.source_repository }}
             source_tag: run-${{ github.run_id }}-${{ github.run_attempt }}
 
     publish-build-environment:
