@@ -312,7 +312,7 @@ jobs:
 
     boot-smoke:
         name: Boot smoke test (${{ matrix.image }})
-        if: always() && needs.authorize.outputs.approved == 'true' && needs.image-build.result != 'cancelled'
+        if: needs.authorize.outputs.approved == 'true' && needs.image-build.result == 'success'
         needs:
           - authorize
           - image-build
