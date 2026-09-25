@@ -4,7 +4,7 @@ set(patch_files
 
 ExternalProject_Add(toolchain-cmake
     GIT_REPOSITORY ${REAVEROS_CMAKE_REPO}
-    GIT_TAG ${REAVEROS_CMAKE_REVISION}
+    GIT_TAG ${REAVEROS_CMAKE_TAG}
     GIT_SHALLOW TRUE
     UPDATE_DISCONNECTED 1
 
@@ -26,6 +26,7 @@ ExternalProject_Add_Step(toolchain-cmake
     apply-patches
     COMMAND git reset --hard
     COMMAND git clean -fxd
+    COMMAND git checkout --detach ${REAVEROS_CMAKE_REVISION}
     COMMAND git apply ${patch_files}
     DEPENDEES set-to-tag
     DEPENDERS configure

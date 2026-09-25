@@ -80,7 +80,7 @@ set(patch_files
 
 ExternalProject_Add(toolchain-llvm
     GIT_REPOSITORY ${REAVEROS_LLVM_REPO}
-    GIT_TAG ${REAVEROS_LLVM_REVISION}
+    GIT_TAG ${REAVEROS_LLVM_TAG}
     GIT_SHALLOW TRUE
     UPDATE_DISCONNECTED 1
 
@@ -119,6 +119,7 @@ ExternalProject_Add_Step(toolchain-llvm
     apply-patches
     COMMAND git reset --hard
     COMMAND git clean -fxd
+    COMMAND git checkout --detach ${REAVEROS_LLVM_REVISION}
     COMMAND git apply ${patch_files}
     DEPENDEES set-to-tag
     DEPENDERS configure
