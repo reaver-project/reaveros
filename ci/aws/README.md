@@ -89,9 +89,10 @@ remain separate jobs with independent reporting.
 
 Per-run image tags are written to staging repositories and expire after three
 days. Successful validation promotes their content-derived tag to immutable
-candidate repositories for pull requests, or mutable production repositories
-for the protected branch. Production images are then copied to both the content tag
-and `latest` in GHCR, for both pruned and unpruned variants.
+candidate repositories for pull requests, or production repositories for the
+protected branch. A separate publisher in the infrastructure repository copies
+images from successful main-branch CI runs to both content tags and `latest` in
+GHCR. The ReaverOS workflow does not receive package-write permission.
 
 Promotion waits for the ECR scan-on-push result for both variants. A missing or
 failed scan and any critical-severity finding block promotion; high-severity

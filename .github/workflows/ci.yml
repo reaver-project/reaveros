@@ -349,20 +349,6 @@ jobs:
             publish_cache: ${{ needs.authorize.outputs.publish_cache == 'true' }}
             source_tag: run-${{ github.run_id }}-${{ github.run_attempt }}
 
-    publish-build-environment:
-        name: Publish build environment to GHCR
-        if: needs.authorize.outputs.publish_cache == 'true'
-        needs:
-          - authorize
-          - promote-build-environment
-        permissions:
-            contents: read
-            id-token: write
-            packages: write
-        uses: ./.github/workflows/aws-publish-build-environment.yml
-        with:
-            content_tag: ${{ needs.promote-build-environment.outputs.content_tag }}
-
     result:
         name: CI result
         if: always()
@@ -376,7 +362,6 @@ jobs:
           - image-build
           - boot-smoke
           - promote-build-environment
-          - publish-build-environment
         runs-on: ubuntu-latest
         timeout-minutes: 5
 
@@ -390,8 +375,6 @@ jobs:
                 IMAGE_RESULT: ${{ needs.image-build.result }}
                 INFRASTRUCTURE_CONTRACT_RESULT: ${{ needs.infrastructure-contract.result }}
                 PROMOTION_RESULT: ${{ needs.promote-build-environment.result }}
-                PUBLISH_CACHE: ${{ needs.authorize.outputs.publish_cache }}
-                PUBLISH_RESULT: ${{ needs.publish-build-environment.result }}
                 REASON: ${{ needs.authorize.outputs.reason }}
                 TOOLCHAIN_STATE_RESULT: ${{ needs.toolchain-update-state.result }}
                 UNIT_TESTS_RESULT: ${{ needs.unit-tests.result }}
@@ -431,17 +414,6 @@ jobs:
                         failed=true
                     fi
                 done
-
-                expected_publish_result=skipped
-                if [[ ${PUBLISH_CACHE} == true ]]
-                then
-                    expected_publish_result=success
-                fi
-                if [[ ${PUBLISH_RESULT} != "${expected_publish_result}" ]]
-                then
-                    printf '::error::GHCR publication finished with %s.\n' "${PUBLISH_RESULT}"
-                    failed=true
-                fi
 
                 if [[ ${failed:-false} == true ]]
                 then
