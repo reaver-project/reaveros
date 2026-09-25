@@ -43,10 +43,15 @@ An admission copies the full commit object to `pull-request/<number>`. Repositor
 rules reserve creation, update, and deletion of that namespace for the CI Gate
 App. `ci.yml` runs on pushes to those branches. AWS OIDC trusts the protected
 default branch and the CI Gate App-reserved branch namespace. The GitHub-hosted
-preflight checks out its policy from the default branch, queries the pull request
-again, and rejects a copied SHA that has gone stale before provisioning. The
-candidate is then checked out by full SHA from this repository on each newly
-provisioned, one-job AWS runner.
+preflight in the checked-in workflow checks out its policy from the default
+branch, queries the pull request again, and rejects a copied SHA that has gone
+stale before provisioning. The candidate is then checked out by full SHA from
+this repository on each newly provisioned, one-job AWS runner.
+
+Admission authorizes the entire commit, including workflow definitions. Changes
+to permissions, OIDC-bearing jobs, or publication steps therefore require the
+same scrutiny as the code those jobs execute. The checked-in preflight is
+defense in depth, not a sandbox against an admitted workflow edit.
 
 Before provisioning any runner, the trusted workflow validates the selected
 revision as an infrastructure consumer. Ordinary revisions must retain the
@@ -57,10 +62,13 @@ version. The shared validator also proves that an automatic update changes no
 files or workflow content beyond exact action-pin and contract substitutions.
 
 Pushes and scheduled runs on the protected default branch are approved and may
-publish caches. Copied pull-request revisions may populate candidate caches but
-cannot publish production images. A new pull-request head invalidates the old
-approval: the controller removes or replaces the copied branch, and both trusted
-preflight checks compare it with the current PR before any AWS runner starts.
+publish caches. The checked-in copied-PR workflow promotes only candidate
+caches; the AWS role grants production ECR writes only to main-branch OIDC
+sessions. An admitted workflow edit can request GitHub package-write permission,
+so approval must account for that capability. A new pull-request head
+invalidates the old approval: the controller removes or replaces the copied
+branch, and both checked-in preflight checks compare it with the current PR
+before any AWS runner starts.
 
 The ReaverOS workflow receives only a narrow OIDC role. It does not receive the
 Runner App key. The infrastructure controller owns JIT registration, stores
