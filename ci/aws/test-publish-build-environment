@@ -30,14 +30,17 @@ then
         cat > /dev/null
     elif [[ $1 == inspect ]]
     then
-        if [[ ! -e ${PUBLISH_TEST_STATE} ]]
-        then
-            exit 1
-        fi
-        printf '{"manifest":"validated"}'
+        reference=${*: -1}
+        state_file=$(printf '%s' "${reference}" | sha256sum | cut -d ' ' -f 1)
+        cat "${PUBLISH_TEST_STATE}/${state_file}"
     elif [[ $1 == copy ]]
     then
-        touch "${PUBLISH_TEST_STATE}"
+        source=${*: -2:1}
+        destination=${*: -1}
+        source_file=$(printf '%s' "${source}" | sha256sum | cut -d ' ' -f 1)
+        destination_file=$(printf '%s' "${destination}" | sha256sum | cut -d ' ' -f 1)
+        cp "${PUBLISH_TEST_STATE}/${source_file}" \
+            "${PUBLISH_TEST_STATE}/${destination_file}"
     fi
     exit
 fi
@@ -53,6 +56,7 @@ export GHCR_TOKEN=example-token
 export GITHUB_ACTOR=reaver-project
 export PUBLISH_TEST_LOG="${test_directory}/calls"
 export PUBLISH_TEST_STATE="${test_directory}/published"
+mkdir "${PUBLISH_TEST_STATE}"
 : > "${PUBLISH_TEST_LOG}"
 
 cleanup()
@@ -62,13 +66,29 @@ cleanup()
 trap cleanup EXIT
 
 content_tag=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+source_image=registry.example/reaveros
+source_unpruned_image=registry.example/reaveros-unpruned
+destination_image=ghcr.io/reaver-project/reaveros-build-env
+destination_unpruned_image=ghcr.io/reaver-project/reaveros-build-env/unpruned
+run_tag=ci-run-101-1
+
+state_file()
+{
+    printf '%s' "docker://$1:$2" | sha256sum | cut -d ' ' -f 1
+}
+
+printf '{"manifest":"pruned"}' > \
+    "${PUBLISH_TEST_STATE}/$(state_file "${source_image}" "${content_tag}")"
+printf '{"manifest":"unpruned"}' > \
+    "${PUBLISH_TEST_STATE}/$(state_file "${source_unpruned_image}" "${content_tag}")"
+
 "${self_dir}/publish-build-environment" \
-    registry.example/reaveros \
-    registry.example/reaveros-unpruned \
-    ghcr.io/reaver-project/reaveros-build-env \
-    ghcr.io/reaver-project/reaveros-build-env/unpruned \
+    "${source_image}" \
+    "${source_unpruned_image}" \
+    "${destination_image}" \
+    "${destination_unpruned_image}" \
     "${content_tag}" \
-    ci-run-101-1
+    "${run_tag}"
 
 assert_log_count()
 {
@@ -88,23 +108,74 @@ assert_log_count 1 $'aws\tecr\tget-login-password'
 assert_log_count 2 $'skopeo\tlogin'
 assert_log_count 6 $'skopeo\tcopy'
 
+assert_destinations_match_sources()
+{
+    local index tag destination source
+    local -a destinations=("${destination_image}" "${destination_unpruned_image}")
+    local -a sources=("${source_image}" "${source_unpruned_image}")
+    for index in "${!destinations[@]}"
+    do
+        source="${PUBLISH_TEST_STATE}/$(state_file "${sources[index]}" "${content_tag}")"
+        for tag in "${content_tag}" "${run_tag}" latest
+        do
+            destination="${PUBLISH_TEST_STATE}/$(state_file "${destinations[index]}" "${tag}")"
+            if ! cmp --silent "${source}" "${destination}"
+            then
+                printf 'Publication did not copy %s:%s from its source.\n' \
+                    "${destinations[index]}" "${tag}" >&2
+                exit 1
+            fi
+        done
+    done
+}
+assert_destinations_match_sources
+
 : > "${PUBLISH_TEST_LOG}"
 "${self_dir}/publish-build-environment" \
-    registry.example/reaveros \
-    registry.example/reaveros-unpruned \
-    ghcr.io/reaver-project/reaveros-build-env \
-    ghcr.io/reaver-project/reaveros-build-env/unpruned \
+    "${source_image}" \
+    "${source_unpruned_image}" \
+    "${destination_image}" \
+    "${destination_unpruned_image}" \
     "${content_tag}" \
-    ci-run-101-1
+    "${run_tag}"
 assert_log_count 0 $'skopeo\tcopy'
+
+printf '{"manifest":"wrong"}' > \
+    "${PUBLISH_TEST_STATE}/$(state_file "${destination_unpruned_image}" latest)"
+: > "${PUBLISH_TEST_LOG}"
+"${self_dir}/publish-build-environment" \
+    "${source_image}" \
+    "${source_unpruned_image}" \
+    "${destination_image}" \
+    "${destination_unpruned_image}" \
+    "${content_tag}" \
+    "${run_tag}"
+assert_log_count 6 $'skopeo\tcopy'
+assert_destinations_match_sources
+
+for tag in "${content_tag}" "${run_tag}" latest
+do
+    printf '{"manifest":"wrong"}' > \
+        "${PUBLISH_TEST_STATE}/$(state_file "${destination_image}" "${tag}")"
+done
+: > "${PUBLISH_TEST_LOG}"
+"${self_dir}/publish-build-environment" \
+    "${source_image}" \
+    "${source_unpruned_image}" \
+    "${destination_image}" \
+    "${destination_unpruned_image}" \
+    "${content_tag}" \
+    "${run_tag}"
+assert_log_count 6 $'skopeo\tcopy'
+assert_destinations_match_sources
 
 : > "${PUBLISH_TEST_LOG}"
 if "${self_dir}/publish-build-environment" \
-    registry.example/reaveros \
-    registry.example/reaveros-unpruned \
-    ghcr.io/reaver-project/reaveros-build-env \
-    ghcr.io/reaver-project/reaveros-build-env/unpruned \
-    invalid ci-run-101-1 > /dev/null 2>&1
+    "${source_image}" \
+    "${source_unpruned_image}" \
+    "${destination_image}" \
+    "${destination_unpruned_image}" \
+    invalid "${run_tag}" > /dev/null 2>&1
 then
     printf 'Publication accepted an invalid content tag.\n' >&2
     exit 1

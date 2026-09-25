@@ -74,15 +74,25 @@ manifest_digest()
 
 published_pair_matches()
 {
-    for destination in "${destination_image}" "${destination_unpruned_image}"
+    local -a sources=("${source_image}" "${source_unpruned_image}")
+    local -a destinations=("${destination_image}" "${destination_unpruned_image}")
+    local index source_digest destination_digest destination_tag
+
+    for index in "${!destinations[@]}"
     do
-        if ! run_digest=$(manifest_digest "${destination}" "${run_tag}") ||
-            ! content_digest=$(manifest_digest "${destination}" "${content_tag}") ||
-            ! latest_digest=$(manifest_digest "${destination}" latest) ||
-            [[ ${run_digest} != "${content_digest}" || ${run_digest} != "${latest_digest}" ]]
+        if ! source_digest=$(manifest_digest "${sources[index]}" "${content_tag}")
         then
             return 1
         fi
+        for destination_tag in "${run_tag}" "${content_tag}" latest
+        do
+            if ! destination_digest=$(manifest_digest \
+                "${destinations[index]}" "${destination_tag}") ||
+                [[ ${destination_digest} != "${source_digest}" ]]
+            then
+                return 1
+            fi
+        done
     done
 }
 
