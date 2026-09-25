@@ -295,6 +295,7 @@ function(reaveros_add_ep_fetch_tag_target external_project)
         COMMAND touch ${STAMP_DIR}/${external_project}-set-to-tag
         COMMAND touch ${STAMP_DIR}/${external_project}-skip-update
         COMMAND touch ${STAMP_DIR}/${external_project}-patch
+        COMMAND touch ${STAMP_DIR}/${external_project}-apply-patches
         COMMAND touch ${STAMP_DIR}/${external_project}-configure
         COMMAND touch ${STAMP_DIR}/${external_project}-build
         COMMAND touch ${STAMP_DIR}/${external_project}-install
