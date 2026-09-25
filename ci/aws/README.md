@@ -30,16 +30,14 @@ that pull request.
 ## Authorization
 
 The CI Gate App receives pull-request and issue-comment webhooks. A PR from a
-configured automatic actor is admitted only when every PR commit has a valid
-signature associated with that actor and the commits form a linear chain ending
-at the current head. Other revisions require an exact maintainer comment of
-the form `/ok to test <abbreviated-sha>`, where the abbreviation contains at
+configured automatic actor is admitted only when every commit in the PR's
+head-but-not-base history has a valid signature from that actor, including
+merge commits. GitHub-signed commits also qualify when their author is verified
+as that actor. Other revisions require an exact maintainer comment of the form
+`/ok to test <abbreviated-sha>`, where the abbreviation contains at
 least seven hexadecimal characters. The controller resolves that name through
 GitHub and requires the resulting full object ID to equal the pull request's
 current open, non-draft head.
-
-For App actors, GitHub-signed commits authored by that App satisfy the same
-automatic-admission check.
 
 An admission copies the full commit object to `pull-request/<number>`. Repository
 rules reserve creation, update, and deletion of that namespace for the CI Gate
