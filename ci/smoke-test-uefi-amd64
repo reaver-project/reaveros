@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $# -lt 1 || $# -gt 2 ]]
+then
+    printf 'usage: %s <image> [serial log]\n' "$0" >&2
+    exit 2
+fi
+
+image=$1
+serial_log=${2:-uefi-efipart-amd64.serial.log}
+ovmf_code=/usr/share/OVMF/OVMF_CODE_4M.fd
+ovmf_vars_template=/usr/share/OVMF/OVMF_VARS_4M.fd
+ovmf_vars=$(mktemp --suffix=.fd)
+qemu_pid=
+
+cleanup()
+{
+    if [[ -n ${qemu_pid} ]] && kill -0 "${qemu_pid}" 2>/dev/null
+    then
+        kill "${qemu_pid}" 2>/dev/null || true
+        wait "${qemu_pid}" 2>/dev/null || true
+    fi
+
+    rm -f "${ovmf_vars}"
+}
+trap cleanup EXIT
+
+for required_path in /dev/kvm "${image}" "${ovmf_code}" "${ovmf_vars_template}"
+do
+    if [[ ! -e ${required_path} ]]
+    then
+        printf 'Required QEMU input does not exist: %s\n' "${required_path}" >&2
+        exit 1
+    fi
+done
+
+cp "${ovmf_vars_template}" "${ovmf_vars}"
+rm -f "${serial_log}"
+
+qemu-system-x86_64 \
+    -drive "if=pflash,format=raw,readonly=on,file=${ovmf_code}" \
+    -drive "if=pflash,format=raw,file=${ovmf_vars}" \
+    -drive "format=raw,readonly=on,file=${image}" \
+    -monitor none \
+    -serial "file:${serial_log}" \
+    -cpu qemu64,+sse3,+sse4.1,+sse4.2 \
+    -m 2048 \
+    -smp 4 \
+    -display none \
+    -machine q35 \
+    -global hpet.msi=on \
+    -net none \
+    -enable-kvm \
+    -no-reboot &
+qemu_pid=$!
+
+deadline=$((SECONDS + 180))
+while kill -0 "${qemu_pid}" 2>/dev/null && (( SECONDS < deadline ))
+do
+    if [[ -f ${serial_log} ]] \
+        && grep -Fq 'Hello from userspace logger!' "${serial_log}"
+    then
+        break
+    fi
+
+    sleep 1
+done
+
+if [[ ! -f ${serial_log} ]] \
+    || ! grep -Fq 'Hello from userspace logger!' "${serial_log}"
+then
+    printf 'ReaverOS did not reach the userspace logger within 180 seconds.\n' >&2
+    if [[ -f ${serial_log} ]]
+    then
+        tail -n 100 "${serial_log}" >&2
+    fi
+    exit 1
+fi
+
+printf 'ReaverOS reached the userspace logger.\n'

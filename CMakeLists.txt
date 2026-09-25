@@ -31,7 +31,8 @@ if (NOT GIT_EXECUTABLE OR NOT GIT_VERSION_STRING)
 endif()
 
 if (${CMAKE_VERSION} VERSION_GREATER_EQUAL 3.19)
-    cmake_policy(SET CMP0114 OLD)
+    cmake_policy(SET CMP0113 NEW)
+    cmake_policy(SET CMP0114 NEW)
 endif()
 include(ExternalProject)
 

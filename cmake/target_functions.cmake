@@ -291,14 +291,14 @@ function(reaveros_add_ep_fetch_tag_target external_project)
         INDEPENDENT TRUE
     )
 
-    add_custom_command(TARGET ${external_project}
+    add_custom_command(TARGET ${external_project} POST_BUILD
         COMMAND touch ${STAMP_DIR}/${external_project}-set-to-tag
         COMMAND touch ${STAMP_DIR}/${external_project}-skip-update
         COMMAND touch ${STAMP_DIR}/${external_project}-patch
+        COMMAND touch ${STAMP_DIR}/${external_project}-apply-patches
         COMMAND touch ${STAMP_DIR}/${external_project}-configure
         COMMAND touch ${STAMP_DIR}/${external_project}-build
         COMMAND touch ${STAMP_DIR}/${external_project}-install
         COMMAND rm -rf ${STAMP_DIR}/${external_project}-prune
     )
 endfunction()
-

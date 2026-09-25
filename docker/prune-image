@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $# -ne 2 ]]
+then
+    printf 'usage: %s <unpruned image> <pruned image>\n' "$0" >&2
+    exit 2
+fi
+
+unpruned_image=$1
+pruned_image=$2
+container="reaveros-docker-prune-${$}"
+
+cleanup()
+{
+    docker rm -f "${container}" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+docker run --name "${container}" "${unpruned_image}" /usr/bin/env bash -c '
+    set -euo pipefail
+    cd /build
+    make all-toolchain-prune -j"$(nproc)"
+'
+
+docker export "${container}" \
+    | docker import --change 'CMD ["/usr/bin/env", "bash"]' - "${pruned_image}"

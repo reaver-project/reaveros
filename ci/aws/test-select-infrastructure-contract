@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $(basename -- "$0") == gh ]]
+then
+    printf '%s\n' "${CONTRACT_TEST_PULL_REQUEST}"
+    exit
+fi
+
+self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+test_directory=$(mktemp -d)
+trusted_root="${test_directory}/trusted"
+mkdir -p "${test_directory}/bin" "${trusted_root}/ci/aws"
+ln -s "${self_dir}/test-select-infrastructure-contract" \
+    "${test_directory}/bin/gh"
+export PATH="${test_directory}/bin:${PATH}"
+printf '%s\n' 1111111111111111111111111111111111111111 \
+    > "${trusted_root}/ci/aws/infrastructure-revision"
+printf '%s\n' 1 > "${trusted_root}/ci/aws/infrastructure-contract-version"
+
+cleanup()
+{
+    rm -rf "${test_directory}"
+}
+trap cleanup EXIT
+
+source_sha=4444444444444444444444444444444444444444
+export CONTRACT_TEST_PULL_REQUEST
+CONTRACT_TEST_PULL_REQUEST=$(jq --null-input --compact-output \
+    --arg sha "${source_sha}" \
+    '{
+        base: {sha: "2222222222222222222222222222222222222222"},
+        draft: false,
+        head: {
+            ref: "feature/example",
+            repo: {full_name: "contributor/reaveros"},
+            sha: $sha
+        },
+        state: "open",
+        user: {login: "contributor"}
+    }')
+
+run_selector()
+{
+    name=$1
+    ci_ref=$2
+    source_ref=$3
+    pull_request_number=$4
+    output="${test_directory}/${name}.output"
+    GITHUB_OUTPUT="${output}" \
+    GITHUB_REF_NAME="${ci_ref}" \
+    GITHUB_REPOSITORY=reaver-project/reaveros \
+    SOURCE_REF="${source_ref}" \
+    SOURCE_REPOSITORY=reaver-project/reaveros \
+    SOURCE_SHA="${source_sha}" \
+    PULL_REQUEST_NUMBER="${pull_request_number}" \
+    DEPLOYED_INFRASTRUCTURE_REVISION=3333333333333333333333333333333333333333 \
+    DEPLOYED_INFRASTRUCTURE_CONTRACT_VERSION=2 \
+    DEPLOYED_MAINTENANCE_APP_SLUG=reaver-project-maintenance \
+        "${self_dir}/select-infrastructure-contract" "${trusted_root}" \
+        || return
+    printf '%s\n' "${output}"
+}
+
+main_output=$(run_selector main main main '')
+grep --fixed-strings --line-regexp \
+    'expected_revision=1111111111111111111111111111111111111111' \
+    "${main_output}" >/dev/null
+
+ordinary_output=$(run_selector ordinary pull-request/17 feature/example 17)
+grep --fixed-strings --line-regexp \
+    'expected_revision=1111111111111111111111111111111111111111' \
+    "${ordinary_output}" >/dev/null
+grep --fixed-strings --line-regexp 'expected_contract_version=1' \
+    "${ordinary_output}" >/dev/null
+grep --fixed-strings --line-regexp 'base_revision=' "${ordinary_output}" >/dev/null
+
+CONTRACT_TEST_PULL_REQUEST=$(jq \
+    '.head.ref = "maintenance/infrastructure/3333333333333333333333333333333333333333"
+     | .head.repo.full_name = "reaver-project/reaveros"
+     | .user.login = "reaver-project-maintenance[bot]"' \
+    <<< "${CONTRACT_TEST_PULL_REQUEST}")
+automatic_output=$(run_selector automatic \
+    pull-request/18 \
+    maintenance/infrastructure/3333333333333333333333333333333333333333 \
+    18)
+grep --fixed-strings --line-regexp \
+    'expected_revision=3333333333333333333333333333333333333333' \
+    "${automatic_output}" >/dev/null
+grep --fixed-strings --line-regexp 'expected_contract_version=2' \
+    "${automatic_output}" >/dev/null
+grep --fixed-strings --line-regexp \
+    'base_revision=2222222222222222222222222222222222222222' \
+    "${automatic_output}" >/dev/null
+
+CONTRACT_TEST_PULL_REQUEST=$(jq '.user.login = "impostor"' \
+    <<< "${CONTRACT_TEST_PULL_REQUEST}")
+if run_selector impostor \
+    pull-request/18 \
+    maintenance/infrastructure/3333333333333333333333333333333333333333 \
+    18 >/dev/null 2>&1
+then
+    printf 'An infrastructure update from the wrong actor was accepted.\n' >&2
+    exit 1
+fi
+
+CONTRACT_TEST_PULL_REQUEST=$(jq \
+    '.user.login = "reaver-project-maintenance[bot]"
+     | .head.sha = "5555555555555555555555555555555555555555"' \
+    <<< "${CONTRACT_TEST_PULL_REQUEST}")
+if run_selector stale \
+    pull-request/18 \
+    maintenance/infrastructure/3333333333333333333333333333333333333333 \
+    18 >/dev/null 2>&1
+then
+    printf 'A stale copied infrastructure revision was accepted.\n' >&2
+    exit 1
+fi
+
+printf 'Infrastructure contract selection tests passed.\n'

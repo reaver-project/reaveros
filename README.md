@@ -33,19 +33,19 @@ ReaverOS builds the full toolchain that it uses for all builds internally, at ve
 build ReaverOS, you need internet access to fetch the repositories for the entire toolchain.
 
 This also means that an initial build using a given toolchain will take a long time, because it will build full LLVM.
-Two docker images containing pre-built binaries are available:
+CI publishes two Docker images containing pre-built binaries:
 
-* `ghcr.io/griwes/reaveros-build-env` contains just the necessary files, and not the toolchain checkouts and build directories
+* `ghcr.io/reaver-project/reaveros-build-env` contains just the necessary files, and not the toolchain checkouts and build directories
 (for mechanics of this, see notes about `prune` targets below). This has an advantage of making the image smaller, but will
 require rebuild from scratch (although using ccache) if any of the toolchain elements change.
-* `ghcr.io/griwes/reaveros-build-env/unpruned`, which is exactly the same as above, but prior to running `all-toolchain-prune`.
+* `ghcr.io/reaver-project/reaveros-build-env/unpruned`, which is exactly the same as above, but prior to running `all-toolchain-prune`.
 This has the advantage of not requiring a full rebuild of the toolchain when they change - at the price of a much larger size.
 (At the time of writing, about 1GiB for the pruned image vs 7GiB for the unpruned one.)
 
 The images expect the root directory of the git repository mounted in /reaveros. A possible way to achieve this is to:
 
 ```bash
-git clone https://github.com/griwes/reaveros
+git clone https://github.com/reaver-project/reaveros
 docker run -v $(pwd):/reaveros -it <image>
 # <image> is one of the URLs listed above
 ```
@@ -67,10 +67,14 @@ Alternatively, you can create another docker volume, with `-v`, and copy the res
 Keep in mind that if you terminate the docker container, you will need to rebuild the ReaverOS code itself - but the build should
 be fairly quick regardless.
 
-The docker images are rebuilt daily, but unless a toolchain version changes, it should not affect them. However, if you do a git
-pull, and there are changes to the toolchain versions between your old copy of the repository and upstream, it is recommended to
-also restart the docker container and do `docker pull` on the image you are using, to get the latest versions of the prebuilt
-toolchain.
+The docker images are keyed by every tracked toolchain input, including local
+patches. CI reuses an exact content match, rebuilds when those inputs change,
+and refreshes the container operating system on the weekly scheduled run. If a
+git pull changes the toolchain inputs, restart the docker container and pull
+the matching image before continuing.
+
+The AWS CI architecture, authorization policy, cache promotion flow, and
+required repository variables are documented in `ci/aws/README.md`.
 
 ### Configuration options
 
@@ -142,4 +146,3 @@ use `ctest -L`. See the `ctest` documentation for further instructions.
 
 For convenience, an additional target - `run-tests` - is exposed. This target is equivalent to building the `all-build-tests`
 target, followed by running `ctest` with no arguments.
-

@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $# -ne 3 ]]
+then
+    printf 'usage: %s <image> <build-environment image> <artifact directory>\n' "$0" >&2
+    exit 2
+fi
+
+image=$1
+build_environment=$2
+artifact_dir=$3
+repo_root=$(git rev-parse --show-toplevel)
+
+if [[ ! ${image} =~ ^[a-z0-9-]+$ ]]
+then
+    printf 'Invalid image name: %s\n' "${image}" >&2
+    exit 2
+fi
+
+mkdir -p "${artifact_dir}"
+artifact_dir=$(cd -- "${artifact_dir}" && pwd)
+docker run --rm \
+    --volume "${repo_root}:/reaveros:ro" \
+    --volume "${artifact_dir}:/artifacts" \
+    "${build_environment}" \
+    /usr/bin/env bash -c '
+        set -euo pipefail
+        image=$1
+        cd /build
+        cmake /reaveros -DREAVEROS_ENABLE_UNIT_TESTS=ON
+        make "image-${image}" -j"$(nproc)"
+        cp "install/images/${image}.img" /artifacts/
+    ' -- "${image}"

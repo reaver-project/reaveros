@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $# -ne 1 \
+    || -z ${GITHUB_OUTPUT:-} \
+    || -z ${GITHUB_REF_NAME:-} \
+    || -z ${GITHUB_REPOSITORY:-} \
+    || -z ${SOURCE_REF:-} \
+    || -z ${SOURCE_REPOSITORY:-} \
+    || -z ${SOURCE_SHA:-} ]]
+then
+    printf 'usage: %s <trusted-repository-root>\n' "$0" >&2
+    exit 2
+fi
+
+trusted_root=$1
+recorded_revision=$(<"${trusted_root}/ci/aws/infrastructure-revision")
+recorded_contract_version=$(<"${trusted_root}/ci/aws/infrastructure-contract-version")
+if [[ ! ${recorded_revision} =~ ^[0-9a-f]{40}$ \
+    || ! ${recorded_contract_version} =~ ^[1-9][0-9]*$ ]]
+then
+    printf 'The trusted branch records an invalid infrastructure contract.\n' >&2
+    exit 1
+fi
+
+base_revision=
+expected_revision=${recorded_revision}
+expected_contract_version=${recorded_contract_version}
+pull_request_number=${PULL_REQUEST_NUMBER:-}
+
+if [[ ${GITHUB_REF_NAME} =~ ^pull-request/([1-9][0-9]*)$ ]]
+then
+    copied_pull_request_number=${BASH_REMATCH[1]}
+    if [[ ${pull_request_number} != "${copied_pull_request_number}" \
+        || ${SOURCE_REPOSITORY} != "${GITHUB_REPOSITORY}" \
+        || ! ${SOURCE_SHA} =~ ^[0-9a-f]{40}$ ]]
+    then
+        printf 'Copied CI source metadata is inconsistent.\n' >&2
+        exit 1
+    fi
+
+    pull_request=$(gh api \
+        "repos/${GITHUB_REPOSITORY}/pulls/${pull_request_number}")
+    pull_request_state=$(jq --exit-status --raw-output \
+        '.state' <<< "${pull_request}")
+    pull_request_draft=$(jq --raw-output '.draft' <<< "${pull_request}")
+    pull_request_sha=$(jq --exit-status --raw-output \
+        '.head.sha' <<< "${pull_request}")
+    pull_request_ref=$(jq --exit-status --raw-output \
+        '.head.ref' <<< "${pull_request}")
+    pull_request_repository=$(jq --raw-output \
+        '.head.repo.full_name // ""' <<< "${pull_request}")
+
+    if [[ ${pull_request_state} != open \
+        || ${pull_request_draft} == true \
+        || ${pull_request_sha} != "${SOURCE_SHA}" \
+        || ${pull_request_ref} != "${SOURCE_REF}" \
+        || ! ${pull_request_repository} =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]
+    then
+        printf 'Copied CI source no longer matches its pull request.\n' >&2
+        exit 1
+    fi
+
+    if [[ ${SOURCE_REF} == maintenance/infrastructure/* ]]
+    then
+        deployed_revision=${DEPLOYED_INFRASTRUCTURE_REVISION:-}
+        deployed_contract_version=${DEPLOYED_INFRASTRUCTURE_CONTRACT_VERSION:-}
+        maintenance_app_slug=${DEPLOYED_MAINTENANCE_APP_SLUG:-}
+        proposed_revision=${SOURCE_REF#maintenance/infrastructure/}
+        pull_request_actor=$(jq --exit-status --raw-output \
+            '.user.login' <<< "${pull_request}")
+        base_revision=$(jq --exit-status --raw-output \
+            '.base.sha' <<< "${pull_request}")
+
+        if [[ ${pull_request_repository} != "${GITHUB_REPOSITORY}" \
+            || ! ${deployed_revision} =~ ^[0-9a-f]{40}$ \
+            || ! ${deployed_contract_version} =~ ^[1-9][0-9]*$ \
+            || ! ${maintenance_app_slug} =~ ^[a-z0-9]+(-[a-z0-9]+)*$ \
+            || ${proposed_revision} != "${deployed_revision}" \
+            || ${pull_request_actor} != "${maintenance_app_slug}[bot]" \
+            || ! ${base_revision} =~ ^[0-9a-f]{40}$ ]]
+        then
+            printf 'Refusing an untrusted automatic infrastructure update.\n' >&2
+            exit 1
+        fi
+
+        expected_revision=${deployed_revision}
+        expected_contract_version=${deployed_contract_version}
+    fi
+elif [[ -n ${pull_request_number} ]]
+then
+    printf 'Pull request metadata was supplied outside a copied CI branch.\n' >&2
+    exit 1
+fi
+
+{
+    printf 'base_revision=%s\n' "${base_revision}"
+    printf 'expected_contract_version=%s\n' "${expected_contract_version}"
+    printf 'expected_revision=%s\n' "${expected_revision}"
+} >> "${GITHUB_OUTPUT}"

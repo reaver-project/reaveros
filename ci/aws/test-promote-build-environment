@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $(basename -- "$0") == aws ]]
+then
+    {
+        printf 'aws'
+        printf '\t%s' "$@"
+        printf '\n'
+    } >> "${PROMOTION_TEST_LOG}"
+
+    case $1:$2 in
+        ecr:get-login-password)
+            printf 'password\n'
+            ;;
+        ecr:wait)
+            if [[ ${PROMOTION_TEST_CASE} == scan-timeout ]]
+            then
+                exit 255
+            fi
+            ;;
+        ecr:describe-image-scan-findings)
+            if [[ ${PROMOTION_TEST_CASE} == findings-error ]]
+            then
+                exit 254
+            elif [[ ${PROMOTION_TEST_CASE} == critical-findings ]]
+            then
+                printf '{"CRITICAL":1,"HIGH":2}\n'
+            else
+                printf '{"HIGH":2}\n'
+            fi
+            ;;
+        *)
+            printf 'Unexpected AWS call: %s %s\n' "$1" "$2" >&2
+            exit 2
+            ;;
+    esac
+    exit
+fi
+
+if [[ $(basename -- "$0") == skopeo ]]
+then
+    {
+        printf 'skopeo'
+        printf '\t%s' "$@"
+        printf '\n'
+    } >> "${PROMOTION_TEST_LOG}"
+    if [[ $1 == login ]]
+    then
+        cat > /dev/null
+    fi
+    exit
+fi
+
+self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+test_directory=$(mktemp -d)
+mkdir "${test_directory}/bin"
+ln -s "${self_dir}/test-promote-build-environment" "${test_directory}/bin/aws"
+ln -s "${self_dir}/test-promote-build-environment" "${test_directory}/bin/skopeo"
+export PATH="${test_directory}/bin:${PATH}"
+export AWS_REGION=us-west-2
+export PROMOTION_TEST_LOG="${test_directory}/calls"
+
+cleanup()
+{
+    rm -rf "${test_directory}"
+}
+trap cleanup EXIT
+
+run_promotion()
+{
+    "${self_dir}/promote-build-environment" \
+        registry.example/reaveros-staging \
+        registry.example/reaveros-unpruned-staging \
+        registry.example/reaveros-candidate \
+        registry.example/reaveros-unpruned-candidate \
+        registry.example/reaveros \
+        registry.example/reaveros-unpruned \
+        run-101-1 \
+        0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+        true
+}
+
+assert_log_count()
+{
+    expected=$1
+    pattern=$2
+    actual=$(grep --fixed-strings --count "${pattern}" "${PROMOTION_TEST_LOG}" || true)
+    if [[ ${actual} -ne ${expected} ]]
+    then
+        printf 'Expected %s calls matching %s, found %s.\n' \
+            "${expected}" "${pattern}" "${actual}" >&2
+        cat "${PROMOTION_TEST_LOG}" >&2
+        exit 1
+    fi
+}
+
+export PROMOTION_TEST_CASE=high-findings
+: > "${PROMOTION_TEST_LOG}"
+run_promotion > /dev/null
+assert_log_count 2 $'aws\tecr\twait\timage-scan-complete'
+assert_log_count 2 $'aws\tecr\tdescribe-image-scan-findings'
+assert_log_count 4 $'skopeo\tcopy'
+
+for failure_case in scan-timeout findings-error critical-findings
+do
+    export PROMOTION_TEST_CASE=${failure_case}
+    : > "${PROMOTION_TEST_LOG}"
+    if run_promotion > /dev/null 2>&1
+    then
+        printf 'Promotion accepted the %s test case.\n' "${failure_case}" >&2
+        exit 1
+    fi
+    assert_log_count 0 $'skopeo\tcopy'
+done
+
+printf 'Build-environment promotion tests passed.\n'

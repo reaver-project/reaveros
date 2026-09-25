@@ -1,0 +1,9 @@
+repos:
+  - repo: local
+    hooks:
+      - id: aws-ci-workflow-policy
+        name: Check AWS CI workflow policy
+        entry: ci/aws/test-workflows
+        language: system
+        files: ^(\.github/workflows/|ci/aws/)
+        pass_filenames: false

@@ -1,0 +1,91 @@
+name: AWS build-environment promotion
+
+on:
+    workflow_call:
+        inputs:
+            publish_cache:
+                description: Request promotion to the production repositories
+                required: true
+                type: boolean
+            source_tag:
+                description: Validated per-run candidate cache tag
+                required: true
+                type: string
+        outputs:
+            content_tag:
+                description: Trusted content-derived cache tag
+                value: ${{ jobs.promote.outputs.content_tag }}
+
+permissions:
+    contents: read
+
+jobs:
+    promote:
+        name: Promote validated build environment
+        runs-on: ubuntu-latest
+        timeout-minutes: 15
+
+        outputs:
+            content_tag: ${{ steps.content.outputs.content_tag }}
+
+        permissions:
+            contents: read
+            id-token: write # Authenticate to the narrowly scoped AWS promotion role.
+
+        steps:
+          - name: Check out trusted cache helpers
+            uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+            with:
+                ref: ${{ github.event.repository.default_branch }}
+                persist-credentials: false
+
+          - name: Check out the validated revision
+            uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+            with:
+                repository: ${{ github.repository }}
+                ref: ${{ github.sha }}
+                path: source
+                persist-credentials: false
+
+          - name: Derive the reusable cache key
+            id: content
+            run: printf 'content_tag=%s\n' "$(./docker/toolchain-key source)" >> "${GITHUB_OUTPUT}"
+
+          - name: Read the AWS infrastructure contract
+            id: stack
+            uses: reaver-project/infrastructure/actions/aws-stack-contract@351d6eef21c212ba653d5b7179cbbab6e93856ac
+            with:
+                aws-region: ${{ vars.AWS_REGION }}
+                expected-contract-version: '2'
+                role-arn: ${{ vars.AWS_RUNNER_ROLE_ARN }}
+                role-session-name: reaveros-${{ github.run_id }}-promote
+                stack-name: ${{ vars.AWS_RUNNER_STACK_NAME }}
+
+          - name: Install the registry copy client
+            run: |
+                sudo apt-get update
+                sudo apt-get install --yes skopeo
+
+          - name: Promote the cache
+            env:
+                BUILD_ENVIRONMENT: ${{ fromJSON(steps.stack.outputs.outputs).BuildEnvironmentRepositoryUri }}
+                CANDIDATE_BUILD_ENVIRONMENT: ${{ fromJSON(steps.stack.outputs.outputs).CandidateBuildEnvironmentRepositoryUri }}
+                CANDIDATE_UNPRUNED_BUILD_ENVIRONMENT: ${{ fromJSON(steps.stack.outputs.outputs).CandidateUnprunedBuildEnvironmentRepositoryUri }}
+                CONTENT_TAG: ${{ steps.content.outputs.content_tag }}
+                AWS_REGION: ${{ vars.AWS_REGION }}
+                PUBLISH_CACHE: ${{ inputs.publish_cache && github.event_name != 'pull_request_target' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+                SOURCE_TAG: ${{ inputs.source_tag }}
+                STAGING_BUILD_ENVIRONMENT: ${{ fromJSON(steps.stack.outputs.outputs).StagingBuildEnvironmentRepositoryUri }}
+                STAGING_UNPRUNED_BUILD_ENVIRONMENT: ${{ fromJSON(steps.stack.outputs.outputs).StagingUnprunedBuildEnvironmentRepositoryUri }}
+                UNPRUNED_BUILD_ENVIRONMENT: ${{ fromJSON(steps.stack.outputs.outputs).UnprunedBuildEnvironmentRepositoryUri }}
+            run: |
+                ./ci/aws/promote-build-environment \
+                    "${STAGING_BUILD_ENVIRONMENT}" \
+                    "${STAGING_UNPRUNED_BUILD_ENVIRONMENT}" \
+                    "${CANDIDATE_BUILD_ENVIRONMENT}" \
+                    "${CANDIDATE_UNPRUNED_BUILD_ENVIRONMENT}" \
+                    "${BUILD_ENVIRONMENT}" \
+                    "${UNPRUNED_BUILD_ENVIRONMENT}" \
+                    "${SOURCE_TAG}" \
+                    "${CONTENT_TAG}" \
+                    "${PUBLISH_CACHE}"

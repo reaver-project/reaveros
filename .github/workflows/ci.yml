@@ -1,178 +1,449 @@
 name: CI
 
+permissions:
+    contents: read
+
 on:
     push:
         branches:
           - main
-    pull_request:
-        branches:
-          - main
+          - pull-request/*
+    schedule:
+      - cron: '0 4 * * 0'
+    workflow_dispatch:
+        inputs:
+            refresh_build_environment:
+                description: Refresh the container operating system before validation
+                default: false
+                required: false
+                type: boolean
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+    cancel-in-progress: true
 
 jobs:
-    build-env:
-        name: Prepare build environment
+    authorize:
+        name: Authorize AWS CI
         runs-on: ubuntu-latest
+        timeout-minutes: 5
+
+        permissions:
+            contents: read
+            pull-requests: read
+
+        outputs:
+            approved: ${{ steps.authorize.outputs.approved }}
+            publish_cache: ${{ steps.authorize.outputs.publish_cache }}
+            pull_request_number: ${{ steps.authorize.outputs.pull_request_number }}
+            reason: ${{ steps.authorize.outputs.reason }}
+            refresh_cache: ${{ steps.authorize.outputs.refresh_cache }}
+            source_ref: ${{ steps.authorize.outputs.source_ref }}
+            source_repository: ${{ steps.authorize.outputs.source_repository }}
+            source_sha: ${{ steps.authorize.outputs.source_sha }}
 
         steps:
-          - name: Check out the repository
-            uses: actions/checkout@v3
-
-          - name: Free up some space on the rootfs
-            run: |
-                sudo rm -rf /usr/share/rust
-                sudo rm -rf /usr/share/swift
-                sudo rm -rf /usr/share/dotnet
-                sudo rm -rf /usr/local/lib/android
-                sudo rm -rf /opt/ghc
-                sudo rm -rf /usr/local/share/boost
-                sudo rm -rf /opt/hostedtoolcache/CodeQL
-                sudo rm -rf "$AGENT_TOOLSDIRECTORY"
-
-          - name: Update containers
-            run: ./docker/update-images
-
-          - name: Remove unpruned images
-            run: |
-                docker system prune -f
-                docker images -q ghcr.io/griwes/reaveros-build-env/unpruned | xargs docker rmi -f
-
-          - name: Save the pruned image
-            run: docker save ghcr.io/griwes/reaveros-build-env:${{ github.sha }} | gzip > docker.tar.gz
-
-          - name: Save the pruned image as an artifact
-            uses: actions/upload-artifact@v4
+          - name: Check out trusted authorization policy
+            uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
             with:
-                name: build-env
-                path: ./docker.tar.gz
-                retention-days: 3
+                ref: ${{ github.event.repository.default_branch }}
+                persist-credentials: false
 
-    build-deps-check:
-        name: Check build system dependencies
+          - name: Test the trusted CI policy
+            run: |
+                ./ci/aws/test-authorize
+                ./ci/aws/test-promote-build-environment
+                ./ci/aws/test-publish-build-environment
+                ./ci/aws/test-select-infrastructure-contract
+                ./ci/aws/test-workflows
+                ./ci/test-build-image
+
+          - name: Evaluate AWS CI policy
+            id: authorize
+            env:
+                GH_TOKEN: ${{ github.token }}
+                REAVEROS_CI_GATE_APP_SLUG: ${{ vars.CI_GATE_APP_SLUG }}
+            run: ./ci/aws/authorize
+
+          - name: Summarize authorization
+            env:
+                APPROVED: ${{ steps.authorize.outputs.approved }}
+                REASON: ${{ steps.authorize.outputs.reason }}
+                SOURCE_REF: ${{ steps.authorize.outputs.source_ref }}
+                SOURCE_SHA: ${{ steps.authorize.outputs.source_sha }}
+            run: |
+                {
+                    printf '## AWS CI authorization\n\n'
+                    printf -- '- Approved: `%s`\n' "${APPROVED}"
+                    printf -- '- Reason: %s\n' "${REASON}"
+                    printf -- '- Source: `%s` (`%s`)\n' "${SOURCE_REF}" "${SOURCE_SHA}"
+                } >> "${GITHUB_STEP_SUMMARY}"
+
+    infrastructure-contract:
+        name: Validate infrastructure consumer
+        if: needs.authorize.outputs.approved == 'true'
+        needs: authorize
         runs-on: ubuntu-latest
-        needs: build-env
+        timeout-minutes: 10
 
+        permissions:
+            contents: read
+            pull-requests: read
+
+        steps:
+          - name: Check out the trusted consumer policy
+            uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+            with:
+                ref: ${{ github.event.repository.default_branch }}
+                path: trusted
+                persist-credentials: false
+
+          - name: Check out the requested revision without executing it
+            uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+            with:
+                repository: ${{ needs.authorize.outputs.source_repository }}
+                ref: ${{ needs.authorize.outputs.source_sha }}
+                fetch-depth: 0
+                path: candidate
+                persist-credentials: false
+
+          - name: Select the required infrastructure contract
+            id: contract
+            env:
+                DEPLOYED_INFRASTRUCTURE_CONTRACT_VERSION: ${{ vars.AWS_INFRASTRUCTURE_CONTRACT_VERSION }}
+                DEPLOYED_INFRASTRUCTURE_REVISION: ${{ vars.AWS_INFRASTRUCTURE_REVISION }}
+                DEPLOYED_MAINTENANCE_APP_SLUG: ${{ vars.MAINTENANCE_APP_SLUG }}
+                GH_TOKEN: ${{ github.token }}
+                PULL_REQUEST_NUMBER: ${{ needs.authorize.outputs.pull_request_number }}
+                SOURCE_REF: ${{ needs.authorize.outputs.source_ref }}
+                SOURCE_REPOSITORY: ${{ needs.authorize.outputs.source_repository }}
+                SOURCE_SHA: ${{ needs.authorize.outputs.source_sha }}
+            run: trusted/ci/aws/select-infrastructure-contract trusted
+
+          - name: Validate the requested infrastructure consumer
+            uses: reaver-project/infrastructure/actions/validate-infrastructure-consumer@351d6eef21c212ba653d5b7179cbbab6e93856ac
+            with:
+                source-directory: ${{ github.workspace }}/candidate
+                revision-file: ci/aws/infrastructure-revision
+                contract-version-file: ci/aws/infrastructure-contract-version
+                expected-revision: ${{ steps.contract.outputs.expected_revision }}
+                contract-version: ${{ steps.contract.outputs.expected_contract_version }}
+                base-revision: ${{ steps.contract.outputs.base_revision }}
+
+    toolchain-update-state:
+        name: Fail quickly on unresolved toolchain patch refresh
+        if: needs.authorize.outputs.approved == 'true'
+        needs:
+          - authorize
+          - infrastructure-contract
+        runs-on: ubuntu-latest
+        timeout-minutes: 5
+
+        steps:
+          - name: Check out the requested revision
+            uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+            with:
+                repository: ${{ needs.authorize.outputs.source_repository }}
+                ref: ${{ needs.authorize.outputs.source_sha }}
+                persist-credentials: false
+
+          - name: Validate toolchain update state
+            run: |
+                set -euo pipefail
+                unresolved=0
+                if [[ -d maintenance/update-state ]]
+                then
+                    for state_file in maintenance/update-state/*.state
+                    do
+                        if [[ ! -f ${state_file} ]]
+                        then
+                            continue
+                        fi
+
+                        status=$(awk -F= '/^status=/{ print $2 }' "${state_file}" | tail -n1)
+                        unresolved_count=$(awk -F= '/^unresolved_count=/{ print $2 }' "${state_file}" | tail -n1)
+                        failed_patch=$(awk -F= '/^failed_patch=/{ print $2 }' "${state_file}" | tail -n1)
+
+                        if [[ ${status} == incomplete || ${unresolved_count} != 0 ]]
+                        then
+                            echo "::error file=${state_file}::Unresolved patch refresh detected (failed patch: ${failed_patch})."
+                            unresolved=1
+                        fi
+                    done
+                fi
+
+                if [[ ${unresolved} -ne 0 ]]
+                then
+                    exit 1
+                fi
+
+    build-environment:
+        name: Prepare build environment (medium)
+        if: needs.authorize.outputs.approved == 'true'
+        needs:
+          - authorize
+          - infrastructure-contract
+          - toolchain-update-state
+        permissions:
+            contents: read
+            id-token: write
+        uses: ./.github/workflows/aws-runner.yml
+        with:
+            cache_tag: run-${{ github.run_id }}-${{ github.run_attempt }}
+            defer_llvm: true
+            refresh_cache: ${{ needs.authorize.outputs.refresh_cache == 'true' }}
+            runner_size: medium
+            task: prepare
+
+    build-environment-large:
+        name: Rebuild build environment (large)
+        if: needs.build-environment.outputs.needs_large == 'true'
+        needs:
+          - authorize
+          - build-environment
+        permissions:
+            contents: read
+            id-token: write
+        uses: ./.github/workflows/aws-runner.yml
+        with:
+            cache_tag: run-${{ github.run_id }}-${{ github.run_attempt }}
+            refresh_cache: ${{ needs.authorize.outputs.refresh_cache == 'true' }}
+            runner_size: large
+            task: prepare
+
+    build-environment-ready:
+        name: Build environment ready
+        if: always() && needs.authorize.outputs.approved == 'true'
+        needs:
+          - authorize
+          - build-environment
+          - build-environment-large
+        runs-on: ubuntu-latest
+        timeout-minutes: 5
+
+        steps:
+          - name: Check preparation result
+            env:
+                LARGE_READY: ${{ needs.build-environment-large.outputs.ready }}
+                LARGE_RESULT: ${{ needs.build-environment-large.result }}
+                MEDIUM_NEEDS_LARGE: ${{ needs.build-environment.outputs.needs_large }}
+                MEDIUM_READY: ${{ needs.build-environment.outputs.ready }}
+                MEDIUM_RESULT: ${{ needs.build-environment.result }}
+            run: |
+                set -euo pipefail
+                if [[ ${MEDIUM_RESULT} != success ]]
+                then
+                    printf '::error::Medium build-environment preparation finished with %s.\n' "${MEDIUM_RESULT}"
+                    exit 1
+                fi
+
+                if [[ ${MEDIUM_NEEDS_LARGE} == true ]]
+                then
+                    if [[ ${LARGE_RESULT} != success || ${LARGE_READY} != true ]]
+                    then
+                        printf '::error::Large build-environment preparation finished with %s.\n' "${LARGE_RESULT}"
+                        exit 1
+                    fi
+                elif [[ ${MEDIUM_READY} != true ]]
+                then
+                    printf '::error::Medium preparation did not produce a build environment.\n'
+                    exit 1
+                fi
+
+    build-dependencies:
+        name: Check build-system dependencies (${{ matrix.arch }})
+        needs:
+          - authorize
+          - build-environment-ready
+        permissions:
+            contents: read
+            id-token: write
         strategy:
+            fail-fast: false
             matrix:
                 arch:
                   - amd64
+        uses: ./.github/workflows/aws-runner.yml
+        with:
+            cache_tag: run-${{ github.run_id }}-${{ github.run_attempt }}
+            runner_size: medium
+            target: ${{ matrix.arch }}
+            task: build-dependencies
 
-        steps:
-          - name: Check out the repository
-            uses: actions/checkout@v3
-
-          - name: Download build-env
-            uses: actions/download-artifact@v4
-            with:
-                name: build-env
-                path: artifacts
-
-          - name: Import docker image
-            run: docker load --input artifacts/docker.tar.gz
-
-          - name: Verify dependencies of all install targets
-            run: |
-                docker run -v $(pwd):/reaveros ghcr.io/griwes/reaveros-build-env:${{ github.sha }} bash -c '
-                    set -e
-                    set -o pipefail
-                    cd /build
-                    cmake .
-                    for target in $(make help | grep -- -${{ matrix.arch }}$ | grep -v all | sed "s/\.\.\. //")
-                    do
-                        rm -rf install/{images,kernels,loaders,sysroots,userspace}
-                        make ${target} -j$(nproc)
-                    done
-                '
+    unit-tests:
+        name: Unit tests (${{ matrix.arch }})
+        needs:
+          - authorize
+          - build-environment-ready
+        permissions:
+            contents: read
+            id-token: write
+        strategy:
+            fail-fast: false
+            matrix:
+                arch:
+                  - amd64
+        uses: ./.github/workflows/aws-runner.yml
+        with:
+            cache_tag: run-${{ github.run_id }}-${{ github.run_attempt }}
+            runner_size: medium
+            target: ${{ matrix.arch }}
+            task: unit-tests
 
     image-build:
-        name: Build OS image
-        runs-on: ubuntu-latest
-        needs: build-env
-
+        name: Build image (${{ matrix.image }})
+        needs:
+          - authorize
+          - build-environment-ready
+        permissions:
+            contents: read
+            id-token: write
         strategy:
+            fail-fast: false
             matrix:
                 image:
                   - uefi-efipart-amd64
+        uses: ./.github/workflows/aws-runner.yml
+        with:
+            cache_tag: run-${{ github.run_id }}-${{ github.run_attempt }}
+            runner_size: medium
+            target: ${{ matrix.image }}
+            task: image
 
-        steps:
-          - name: Check out the repository
-            uses: actions/checkout@v3
-
-          - name: Download build-env
-            uses: actions/download-artifact@v4
-            with:
-                name: build-env
-                path: artifacts
-
-          - name: Import docker image
-            run: docker load --input artifacts/docker.tar.gz
-
-          - name: Build requested image
-            run: |
-                docker run -v $(pwd):/reaveros ghcr.io/griwes/reaveros-build-env:${{ github.sha }} bash -c '
-                    set -e
-                    cd /build
-                    make image-${{ matrix.image }} -j$(nproc)
-                    cp install/images/${{ matrix.image }}.img /reaveros/artifacts
-                '
-
-          - name: Save the built image as an artifact
-            uses: actions/upload-artifact@v4
-            with:
-                name: image-${{ matrix.image }}
-                path: artifacts/${{ matrix.image }}.img
-
-    unit-tests:
-        name: Build and run unit tests
-        runs-on: ubuntu-latest
-        needs: build-env
-
+    boot-smoke:
+        name: Boot smoke test (${{ matrix.image }})
+        if: needs.authorize.outputs.approved == 'true' && needs.image-build.result == 'success'
+        needs:
+          - authorize
+          - image-build
+        permissions:
+            contents: read
+            id-token: write
         strategy:
+            fail-fast: false
             matrix:
-                arch:
-                  - amd64
+                image:
+                  - uefi-efipart-amd64
+        uses: ./.github/workflows/aws-runner.yml
+        with:
+            cache_tag: run-${{ github.run_id }}-${{ github.run_attempt }}
+            runner_size: medium
+            target: ${{ matrix.image }}
+            task: boot
 
-        steps:
-          - name: Check out the repository
-            uses: actions/checkout@v3
+    promote-build-environment:
+        name: Promote validated build environment
+        needs:
+          - authorize
+          - build-environment
+          - build-environment-ready
+          - build-dependencies
+          - unit-tests
+          - image-build
+          - boot-smoke
+        permissions:
+            contents: read
+            id-token: write
+        uses: ./.github/workflows/aws-cache-promotion.yml
+        with:
+            publish_cache: ${{ needs.authorize.outputs.publish_cache == 'true' }}
+            source_tag: run-${{ github.run_id }}-${{ github.run_attempt }}
 
-          - name: Download build-env
-            uses: actions/download-artifact@v4
-            with:
-                name: build-env
-                path: artifacts
+    publish-build-environment:
+        name: Publish build environment to GHCR
+        if: needs.authorize.outputs.publish_cache == 'true'
+        needs:
+          - authorize
+          - promote-build-environment
+        permissions:
+            contents: read
+            id-token: write
+            packages: write
+        uses: ./.github/workflows/aws-publish-build-environment.yml
+        with:
+            content_tag: ${{ needs.promote-build-environment.outputs.content_tag }}
 
-          - name: Import docker image
-            run: docker load --input artifacts/docker.tar.gz
-
-          - name: Build and run unit tests
-            run: |
-                docker run -v $(pwd):/reaveros ghcr.io/griwes/reaveros-build-env:${{ github.sha }} bash -c '
-                    set -e
-                    cd /build
-                    make all-${{ matrix.arch }}-build-tests -j$(nproc)
-                    ctest -j$(nproc)
-                '
-
-    automerge:
-        name: Auto-merge if PR is automatic
+    result:
+        name: CI result
+        if: always()
+        needs:
+          - authorize
+          - infrastructure-contract
+          - toolchain-update-state
+          - build-environment-ready
+          - build-dependencies
+          - unit-tests
+          - image-build
+          - boot-smoke
+          - promote-build-environment
+          - publish-build-environment
         runs-on: ubuntu-latest
-        needs: [build-deps-check, image-build, unit-tests]
-
-        if: github.event_name == 'pull_request'
+        timeout-minutes: 5
 
         steps:
-          - name: Merge the PR if automatic
+          - name: Report result
+            env:
+                APPROVED: ${{ needs.authorize.outputs.approved }}
+                BOOT_RESULT: ${{ needs.boot-smoke.result }}
+                BUILD_DEPENDENCIES_RESULT: ${{ needs.build-dependencies.result }}
+                BUILD_ENVIRONMENT_RESULT: ${{ needs.build-environment-ready.result }}
+                IMAGE_RESULT: ${{ needs.image-build.result }}
+                INFRASTRUCTURE_CONTRACT_RESULT: ${{ needs.infrastructure-contract.result }}
+                PROMOTION_RESULT: ${{ needs.promote-build-environment.result }}
+                PUBLISH_CACHE: ${{ needs.authorize.outputs.publish_cache }}
+                PUBLISH_RESULT: ${{ needs.publish-build-environment.result }}
+                REASON: ${{ needs.authorize.outputs.reason }}
+                TOOLCHAIN_STATE_RESULT: ${{ needs.toolchain-update-state.result }}
+                UNIT_TESTS_RESULT: ${{ needs.unit-tests.result }}
             run: |
-                set -e
-                url=$(jq -r '.pull_request.url' "${GITHUB_EVENT_PATH}")
-                sha=$(jq -r '.pull_request.head.sha' "${GITHUB_EVENT_PATH}")
-                if curl "${url}" | jq -r '.labels[].name' | egrep -q '^automatic:'
+                if [[ ${APPROVED} != true ]]
                 then
-                    curl \
-                        -X PUT \
-                        -H "Accept: application/vnd.github.v3+json" \
-                        -H "Authorization: token ${{ secrets.CI_TOKEN }}" \
-                        "${url}/merge" \
-                        -d "{ \"merge_method\": \"rebase\", \"sha\": \"${sha}\"}"
+                    printf '::error::AWS CI was not authorized: %s\n' "${REASON}"
+                    exit 1
                 fi
 
+                if [[ ${TOOLCHAIN_STATE_RESULT} != success ]]
+                then
+                    printf '::error::The toolchain update-state check finished with %s.\n' "${TOOLCHAIN_STATE_RESULT}"
+                    exit 1
+                fi
+
+                if [[ ${INFRASTRUCTURE_CONTRACT_RESULT} != success ]]
+                then
+                    printf '::error::Infrastructure contract validation finished with %s.\n' \
+                        "${INFRASTRUCTURE_CONTRACT_RESULT}"
+                    exit 1
+                fi
+
+                for result in \
+                    "build environment:${BUILD_ENVIRONMENT_RESULT}" \
+                    "build dependencies:${BUILD_DEPENDENCIES_RESULT}" \
+                    "unit tests:${UNIT_TESTS_RESULT}" \
+                    "image build:${IMAGE_RESULT}" \
+                    "boot smoke test:${BOOT_RESULT}" \
+                    "cache promotion:${PROMOTION_RESULT}"
+                do
+                    name=${result%%:*}
+                    status=${result#*:}
+                    if [[ ${status} != success ]]
+                    then
+                        printf '::error::%s finished with %s.\n' "${name}" "${status}"
+                        failed=true
+                    fi
+                done
+
+                expected_publish_result=skipped
+                if [[ ${PUBLISH_CACHE} == true ]]
+                then
+                    expected_publish_result=success
+                fi
+                if [[ ${PUBLISH_RESULT} != "${expected_publish_result}" ]]
+                then
+                    printf '::error::GHCR publication finished with %s.\n' "${PUBLISH_RESULT}"
+                    failed=true
+                fi
+
+                if [[ ${failed:-false} == true ]]
+                then
+                    exit 1
+                fi

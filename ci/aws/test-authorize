@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $(basename -- "$0") == gh ]]
+then
+    printf '%s\n' "${AUTHORIZE_TEST_PULL_REQUEST}"
+    exit
+fi
+
+self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+test_directory=$(mktemp -d)
+mkdir "${test_directory}/bin"
+ln -s "${self_dir}/test-authorize" "${test_directory}/bin/gh"
+export PATH="${test_directory}/bin:${PATH}"
+
+cleanup()
+{
+    rm -rf "${test_directory}"
+}
+trap cleanup EXIT
+
+event_path="${test_directory}/event.json"
+jq --null-input \
+    '{repository: {default_branch: "main"}, inputs: {refresh_build_environment: "false"}}' \
+    > "${event_path}"
+
+current_sha=0123456789abcdef0123456789abcdef01234567
+export AUTHORIZE_TEST_PULL_REQUEST
+AUTHORIZE_TEST_PULL_REQUEST=$(jq --null-input --compact-output \
+    --arg sha "${current_sha}" \
+    '{
+        draft: false,
+        head: {
+            ref: "feature/example",
+            repo: {full_name: "contributor/reaveros"},
+            sha: $sha
+        },
+        state: "open"
+    }')
+
+run_case()
+{
+    name=$1
+    event_name=$2
+    source_ref=$3
+    source_sha=$4
+    actor=$5
+    expected_approved=$6
+    expected_publish=$7
+    expected_source_ref=$8
+    expected_pull_request_number=$9
+    output_path="${test_directory}/${name}.output"
+
+    GITHUB_ACTOR="${actor}" \
+    GITHUB_EVENT_NAME="${event_name}" \
+    GITHUB_EVENT_PATH="${event_path}" \
+    GITHUB_OUTPUT="${output_path}" \
+    GITHUB_REF_NAME="${source_ref}" \
+    GITHUB_REPOSITORY=reaver-project/reaveros \
+    GITHUB_SHA="${source_sha}" \
+    REAVEROS_CI_GATE_APP_SLUG=reaver-project-ci-gate \
+        "${self_dir}/authorize" >/dev/null
+
+    actual_approved=$(awk -F= '/^approved=/{ print $2 }' "${output_path}")
+    actual_publish=$(awk -F= '/^publish_cache=/{ print $2 }' "${output_path}")
+    actual_source_ref=$(awk -F= '/^source_ref=/{ print $2 }' "${output_path}")
+    actual_pull_request_number=$(awk -F= \
+        '/^pull_request_number=/{ print $2 }' "${output_path}")
+    if [[ ${actual_approved} != "${expected_approved}" \
+        || ${actual_publish} != "${expected_publish}" \
+        || ${actual_source_ref} != "${expected_source_ref}" \
+        || ${actual_pull_request_number} != "${expected_pull_request_number}" ]]
+    then
+        printf '%s: expected %s/%s/%s/%s, got %s/%s/%s/%s\n' \
+            "${name}" \
+            "${expected_approved}" \
+            "${expected_publish}" \
+            "${expected_source_ref}" \
+            "${expected_pull_request_number}" \
+            "${actual_approved}" \
+            "${actual_publish}" \
+            "${actual_source_ref}" \
+            "${actual_pull_request_number}" >&2
+        exit 1
+    fi
+}
+
+run_case main push main "${current_sha}" griwes true true main ''
+run_case copied push pull-request/17 "${current_sha}" \
+    'reaver-project-ci-gate[bot]' true false feature/example 17
+run_case wrong-actor push pull-request/17 "${current_sha}" griwes \
+    false false pull-request/17 17
+run_case feature-push push feature/example "${current_sha}" griwes \
+    false false feature/example ''
+run_case schedule schedule main "${current_sha}" github true true main ''
+run_case dispatch-main workflow_dispatch main "${current_sha}" griwes \
+    true true main ''
+run_case dispatch-feature workflow_dispatch feature/example "${current_sha}" griwes \
+    false false feature/example ''
+
+AUTHORIZE_TEST_PULL_REQUEST=$(jq \
+    '.head.sha = "fedcba9876543210fedcba9876543210fedcba98"' \
+    <<< "${AUTHORIZE_TEST_PULL_REQUEST}")
+run_case stale push pull-request/17 "${current_sha}" \
+    'reaver-project-ci-gate[bot]' false false pull-request/17 17
+
+AUTHORIZE_TEST_PULL_REQUEST=$(jq \
+    '.head.sha = "0123456789abcdef0123456789abcdef01234567" | .draft = true' \
+    <<< "${AUTHORIZE_TEST_PULL_REQUEST}")
+run_case draft push pull-request/17 "${current_sha}" \
+    'reaver-project-ci-gate[bot]' false false pull-request/17 17
+
+printf 'AWS CI authorization tests passed.\n'

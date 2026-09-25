@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+image_kind=${1:-pruned}
+tag=${2:-${REAVEROS_BUILD_ENV_TAG:-$("${self_dir}/toolchain-key" "${self_dir}")}}
+
+case "${image_kind}" in
+    pruned)
+        image=${REAVEROS_BUILD_ENV_IMAGE:-ghcr.io/reaver-project/reaveros-build-env}
+        ;;
+    unpruned)
+        image=${REAVEROS_BUILD_ENV_UNPRUNED_IMAGE:-ghcr.io/reaver-project/reaveros-build-env/unpruned}
+        ;;
+    *)
+        printf 'usage: %s [pruned|unpruned] [tag]\n' "$0" >&2
+        exit 2
+        ;;
+esac
+
+printf '%s:%s\n' "${image}" "${tag}"

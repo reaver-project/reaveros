@@ -4,6 +4,8 @@ ExternalProject_Add(toolchain-dosfstools
     GIT_SHALLOW TRUE
     UPDATE_DISCONNECTED 1
 
+    PATCH_COMMAND git checkout --detach ${REAVEROS_DOSFSTOOLS_REVISION}
+
     STEP_TARGETS install
 
     INSTALL_DIR ${REAVEROS_BINARY_DIR}/install/toolchain/dosfstools
@@ -24,6 +26,8 @@ reaveros_register_target(toolchain-dosfstools-install toolchain)
 
 ExternalProject_Add(toolchain-mtools
     URL ${REAVEROS_MTOOLS_DIR}/${REAVEROS_MTOOLS_VER}
+    URL_HASH SHA256=${REAVEROS_MTOOLS_SHA256}
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     UPDATE_DISCONNECTED 1
 
     STEP_TARGETS install

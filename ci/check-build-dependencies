@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $# -ne 2 ]]
+then
+    printf 'usage: %s <architecture> <build-environment image>\n' "$0" >&2
+    exit 2
+fi
+
+architecture=$1
+build_environment=$2
+repo_root=$(git rev-parse --show-toplevel)
+
+docker run --rm \
+    --volume "${repo_root}:/reaveros:ro" \
+    "${build_environment}" \
+    /usr/bin/env bash -c '
+        set -euo pipefail
+        architecture=$1
+        cd /build
+        cmake /reaveros -DREAVEROS_ENABLE_UNIT_TESTS=ON
+
+        mapfile -t install_targets < <(
+            make help \
+                | sed -n "s/^\.\.\. //p" \
+                | grep -- "-${architecture}$" \
+                | grep -v "^all"
+        )
+
+        if [[ ${#install_targets[@]} -eq 0 ]]
+        then
+            printf "No %s install targets were found.\n" "${architecture}" >&2
+            exit 1
+        fi
+
+        for target in "${install_targets[@]}"
+        do
+            rm -rf install/{images,kernels,loaders,sysroots,userspace}
+            make "${target}" -j"$(nproc)"
+        done
+    ' -- "${architecture}"
