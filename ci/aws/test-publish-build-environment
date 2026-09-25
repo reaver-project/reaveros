@@ -78,9 +78,9 @@ state_file()
 }
 
 printf '{"manifest":"pruned"}' > \
-    "${PUBLISH_TEST_STATE}/$(state_file "${source_image}" "${content_tag}")"
+    "${PUBLISH_TEST_STATE}/$(state_file "${source_image}" "${run_tag}")"
 printf '{"manifest":"unpruned"}' > \
-    "${PUBLISH_TEST_STATE}/$(state_file "${source_unpruned_image}" "${content_tag}")"
+    "${PUBLISH_TEST_STATE}/$(state_file "${source_unpruned_image}" "${run_tag}")"
 
 "${self_dir}/publish-build-environment" \
     "${source_image}" \
@@ -115,7 +115,7 @@ assert_destinations_match_sources()
     local -a sources=("${source_image}" "${source_unpruned_image}")
     for index in "${!destinations[@]}"
     do
-        source="${PUBLISH_TEST_STATE}/$(state_file "${sources[index]}" "${content_tag}")"
+        source="${PUBLISH_TEST_STATE}/$(state_file "${sources[index]}" "${run_tag}")"
         for tag in "${content_tag}" "${run_tag}" latest
         do
             destination="${PUBLISH_TEST_STATE}/$(state_file "${destinations[index]}" "${tag}")"

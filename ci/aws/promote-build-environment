@@ -27,6 +27,7 @@ production_unpruned_image=$6
 source_tag=$7
 content_tag=$8
 publish=$9
+production_run_tag=ci-${source_tag}
 
 if [[ ! ${source_tag} =~ ^run-[0-9]+-[0-9]+$ ]]
 then
@@ -164,7 +165,8 @@ promote_pair()
 
     if ${publish}
     then
-        copy_image "${staging}" "${production}" "${content_tag}" false
+        copy_image "${staging}" "${production}" "${content_tag}" true
+        copy_image "${staging}" "${production}" "${production_run_tag}" true
         copy_image "${staging}" "${production}" latest false
     else
         copy_image "${staging}" "${candidate}" "${content_tag}" true
