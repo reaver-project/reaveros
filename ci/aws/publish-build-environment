@@ -58,7 +58,8 @@ copy_image()
     skopeo copy \
         --all \
         --authfile "${auth_file}" \
-        "docker://${source}:${content_tag}" \
+        --preserve-digests \
+        "docker://${source}:${run_tag}" \
         "docker://${destination}:${destination_tag}"
 }
 
@@ -80,7 +81,7 @@ published_pair_matches()
 
     for index in "${!destinations[@]}"
     do
-        if ! source_digest=$(manifest_digest "${sources[index]}" "${content_tag}")
+        if ! source_digest=$(manifest_digest "${sources[index]}" "${run_tag}")
         then
             return 1
         fi

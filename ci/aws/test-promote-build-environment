@@ -31,6 +31,27 @@ then
                 printf '{"HIGH":2}\n'
             fi
             ;;
+        ecr:describe-images)
+            while [[ $# -gt 0 ]]
+            do
+                if [[ $1 == --repository-name ]]
+                then
+                    repository=$2
+                    break
+                fi
+                shift
+            done
+            if [[ ${repository:-} == *-staging ||
+                ${PROMOTION_TEST_CASE} == existing-image ]]
+            then
+                printf 'sha256:source\n'
+            elif [[ ${PROMOTION_TEST_CASE} == conflicting-image ]]
+            then
+                printf 'sha256:other\n'
+            else
+                exit 254
+            fi
+            ;;
         *)
             printf 'Unexpected AWS call: %s %s\n' "$1" "$2" >&2
             exit 2
@@ -101,7 +122,23 @@ export PROMOTION_TEST_CASE=high-findings
 run_promotion > /dev/null
 assert_log_count 2 $'aws\tecr\twait\timage-scan-complete'
 assert_log_count 2 $'aws\tecr\tdescribe-image-scan-findings'
-assert_log_count 4 $'skopeo\tcopy'
+assert_log_count 6 $'skopeo\tcopy'
+assert_log_count 1 'docker://registry.example/reaveros:ci-run-101-1'
+assert_log_count 1 'docker://registry.example/reaveros-unpruned:ci-run-101-1'
+
+export PROMOTION_TEST_CASE=existing-image
+: > "${PROMOTION_TEST_LOG}"
+run_promotion > /dev/null
+assert_log_count 2 $'skopeo\tcopy'
+
+export PROMOTION_TEST_CASE=conflicting-image
+: > "${PROMOTION_TEST_LOG}"
+if run_promotion > /dev/null 2>&1
+then
+    printf 'Promotion accepted a conflicting immutable production tag.\n' >&2
+    exit 1
+fi
+assert_log_count 0 $'skopeo\tcopy'
 
 for failure_case in scan-timeout findings-error critical-findings
 do
