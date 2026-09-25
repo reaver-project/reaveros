@@ -28,6 +28,16 @@ then
     if [[ $1 == login ]]
     then
         cat > /dev/null
+    elif [[ $1 == inspect ]]
+    then
+        if [[ ! -e ${PUBLISH_TEST_STATE} ]]
+        then
+            exit 1
+        fi
+        printf '{"manifest":"validated"}'
+    elif [[ $1 == copy ]]
+    then
+        touch "${PUBLISH_TEST_STATE}"
     fi
     exit
 fi
@@ -42,6 +52,7 @@ export AWS_REGION=us-west-2
 export GHCR_TOKEN=example-token
 export GITHUB_ACTOR=reaver-project
 export PUBLISH_TEST_LOG="${test_directory}/calls"
+export PUBLISH_TEST_STATE="${test_directory}/published"
 : > "${PUBLISH_TEST_LOG}"
 
 cleanup()
@@ -56,7 +67,8 @@ content_tag=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
     registry.example/reaveros-unpruned \
     ghcr.io/reaver-project/reaveros-build-env \
     ghcr.io/reaver-project/reaveros-build-env/unpruned \
-    "${content_tag}"
+    "${content_tag}" \
+    ci-run-101-1
 
 assert_log_count()
 {
@@ -74,7 +86,17 @@ assert_log_count()
 
 assert_log_count 1 $'aws\tecr\tget-login-password'
 assert_log_count 2 $'skopeo\tlogin'
-assert_log_count 4 $'skopeo\tcopy'
+assert_log_count 6 $'skopeo\tcopy'
+
+: > "${PUBLISH_TEST_LOG}"
+"${self_dir}/publish-build-environment" \
+    registry.example/reaveros \
+    registry.example/reaveros-unpruned \
+    ghcr.io/reaver-project/reaveros-build-env \
+    ghcr.io/reaver-project/reaveros-build-env/unpruned \
+    "${content_tag}" \
+    ci-run-101-1
+assert_log_count 0 $'skopeo\tcopy'
 
 : > "${PUBLISH_TEST_LOG}"
 if "${self_dir}/publish-build-environment" \
@@ -82,7 +104,7 @@ if "${self_dir}/publish-build-environment" \
     registry.example/reaveros-unpruned \
     ghcr.io/reaver-project/reaveros-build-env \
     ghcr.io/reaver-project/reaveros-build-env/unpruned \
-    invalid > /dev/null 2>&1
+    invalid ci-run-101-1 > /dev/null 2>&1
 then
     printf 'Publication accepted an invalid content tag.\n' >&2
     exit 1

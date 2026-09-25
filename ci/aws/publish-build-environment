@@ -2,11 +2,11 @@
 
 set -euo pipefail
 
-if [[ $# -ne 5 ]]
+if [[ $# -ne 6 ]]
 then
     printf '%s\n' \
         "usage: $0 <source image> <source unpruned image>" \
-        '    <destination image> <destination unpruned image> <content tag>' >&2
+        '    <destination image> <destination unpruned image> <content tag> <run tag>' >&2
     exit 2
 fi
 if [[ -z ${AWS_REGION:-} || -z ${GHCR_TOKEN:-} || -z ${GITHUB_ACTOR:-} ]]
@@ -20,14 +20,16 @@ source_unpruned_image=$2
 destination_image=$3
 destination_unpruned_image=$4
 content_tag=$5
+run_tag=$6
 
-if [[ ! ${content_tag} =~ ^[0-9a-f]{64}$ ]]
+if [[ ! ${content_tag} =~ ^[0-9a-f]{64}$ ||
+    ! ${run_tag} =~ ^ci-run-[1-9][0-9]*-[1-9][0-9]*$ ]]
 then
-    printf 'Invalid content tag: %s\n' "${content_tag}" >&2
+    printf 'Invalid content or run tag.\n' >&2
     exit 2
 fi
 
-auth_file=$(mktemp)
+auth_file=$(mktemp /dev/shm/reaveros-ghcr-auth.XXXXXX)
 cleanup()
 {
     rm -f "${auth_file}"
@@ -52,15 +54,52 @@ copy_image()
 {
     source=$1
     destination=$2
-    for destination_tag in "${content_tag}" latest
+    destination_tag=$3
+    skopeo copy \
+        --all \
+        --authfile "${auth_file}" \
+        "docker://${source}:${content_tag}" \
+        "docker://${destination}:${destination_tag}"
+}
+
+manifest_digest()
+{
+    image=$1
+    tag=$2
+    skopeo inspect \
+        --raw \
+        --authfile "${auth_file}" \
+        "docker://${image}:${tag}" 2> /dev/null | sha256sum | cut -d ' ' -f 1
+}
+
+published_pair_matches()
+{
+    for destination in "${destination_image}" "${destination_unpruned_image}"
     do
-        skopeo copy \
-            --all \
-            --authfile "${auth_file}" \
-            "docker://${source}:${content_tag}" \
-            "docker://${destination}:${destination_tag}"
+        if ! run_digest=$(manifest_digest "${destination}" "${run_tag}") ||
+            ! content_digest=$(manifest_digest "${destination}" "${content_tag}") ||
+            ! latest_digest=$(manifest_digest "${destination}" latest) ||
+            [[ ${run_digest} != "${content_digest}" || ${run_digest} != "${latest_digest}" ]]
+        then
+            return 1
+        fi
     done
 }
 
-copy_image "${source_image}" "${destination_image}"
-copy_image "${source_unpruned_image}" "${destination_unpruned_image}"
+if published_pair_matches
+then
+    printf 'Both GHCR image variants already match run %s.\n' "${run_tag}"
+    exit 0
+fi
+
+for destination_tag in "${content_tag}" "${run_tag}" latest
+do
+    copy_image "${source_image}" "${destination_image}" "${destination_tag}"
+    copy_image "${source_unpruned_image}" "${destination_unpruned_image}" "${destination_tag}"
+done
+
+if ! published_pair_matches
+then
+    printf 'GHCR image tags did not converge after publication.\n' >&2
+    exit 1
+fi
