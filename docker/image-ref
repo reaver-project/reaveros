@@ -4,7 +4,7 @@ set -euo pipefail
 
 self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 image_kind=${1:-pruned}
-tag=${2:-${REAVEROS_BUILD_ENV_TAG:-$("${self_dir}/toolchain-key")}}
+tag=${2:-${REAVEROS_BUILD_ENV_TAG:-$("${self_dir}/toolchain-key" "${self_dir}")}}
 
 case "${image_kind}" in
     pruned)
