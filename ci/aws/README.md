@@ -29,18 +29,22 @@ that pull request.
 
 ## Authorization
 
-The CI Gate App receives pull-request and issue-comment webhooks. Revisions from
-configured automatic actors on same-repository branches are admitted directly.
-Other revisions require an exact maintainer comment of the form
-`/ok to test <abbreviated-sha>`, where the abbreviation contains at least seven
-hexadecimal characters. The controller resolves that name through GitHub and
-requires the resulting full object ID to equal the pull request's current open,
-non-draft head.
+The CI Gate App receives pull-request and issue-comment webhooks. A PR from a
+configured automatic actor is admitted only when every PR commit has a valid
+signature associated with that actor and the commits form a linear chain ending
+at the current head. Other revisions require an exact maintainer comment of
+the form `/ok to test <abbreviated-sha>`, where the abbreviation contains at
+least seven hexadecimal characters. The controller resolves that name through
+GitHub and requires the resulting full object ID to equal the pull request's
+current open, non-draft head.
+
+For App actors, GitHub-signed commits authored by that App satisfy the same
+automatic-admission check.
 
 An admission copies the full commit object to `pull-request/<number>`. Repository
 rules reserve creation, update, and deletion of that namespace for the CI Gate
-App. `ci.yml` runs on pushes to those branches, while AWS OIDC trusts only that
-App-reserved namespace and the protected default branch. The GitHub-hosted
+App. `ci.yml` runs on pushes to those branches. AWS OIDC trusts the protected
+default branch and the CI Gate App-reserved branch namespace. The GitHub-hosted
 preflight checks out its policy from the default branch, queries the pull request
 again, and rejects a copied SHA that has gone stale before provisioning. The
 candidate is then checked out by full SHA from this repository on each newly
@@ -74,10 +78,10 @@ toolchain work remains on the medium runner. Once a candidate image is ready,
 build-dependency checks, unit tests, image construction, and the boot smoke test
 remain separate jobs with independent reporting.
 
-Per-run images are written to short-lived staging repositories. A successful
-validation promotes their content-derived tag either to immutable candidate
-repositories for pull requests or to mutable production repositories for the
-protected branch. Production images are then copied to both the content tag
+Per-run image tags are written to staging repositories and expire after three
+days. Successful validation promotes their content-derived tag to immutable
+candidate repositories for pull requests, or mutable production repositories
+for the protected branch. Production images are then copied to both the content tag
 and `latest` in GHCR, for both pruned and unpruned variants.
 
 Promotion waits for the ECR scan-on-push result for both variants. A missing or
