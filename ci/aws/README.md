@@ -17,6 +17,8 @@ repository variables:
 - `AWS_REGION`;
 - `AWS_RUNNER_STACK_NAME`;
 - `AWS_RUNNER_ROLE_ARN`;
+- `AWS_PRODUCTION_PROMOTION_ROLE_ARN` identifies the main-only role that writes
+  production ECR images;
 - `CI_GATE_APP_SLUG` identifies the App allowed to publish an admitted revision
   to a protected CI branch; and
 - `MAINTENANCE_APP_SLUG` identifies the App allowed to publish automatic
@@ -63,9 +65,10 @@ files or workflow content beyond exact action-pin and contract substitutions.
 
 Pushes and scheduled runs on the protected default branch are approved and may
 publish caches. The checked-in copied-PR workflow promotes only candidate
-caches; the AWS role grants production ECR writes only to main-branch OIDC
-sessions. An admitted workflow edit can request GitHub package-write permission,
-so approval must account for that capability. A new pull-request head
+caches. A separate production promotion role trusts only the main-branch
+cache-promotion workflow; the PR-capable role cannot write production ECR images.
+An admitted workflow edit can request GitHub package-write permission, so
+approval must account for that capability. A new pull-request head
 invalidates the old approval: the controller removes or replaces the copied
 branch, and both checked-in preflight checks compare it with the current PR
 before any AWS runner starts.
@@ -86,9 +89,10 @@ remain separate jobs with independent reporting.
 
 Per-run image tags are written to staging repositories and expire after three
 days. Successful validation promotes their content-derived tag to immutable
-candidate repositories for pull requests, or mutable production repositories
-for the protected branch. Production images are then copied to both the content tag
-and `latest` in GHCR, for both pruned and unpruned variants.
+candidate repositories for pull requests, or production repositories for the
+protected branch. A separate publisher in the infrastructure repository copies
+images from successful main-branch CI runs to both content tags and `latest` in
+GHCR. The ReaverOS workflow does not receive package-write permission.
 
 Promotion waits for the ECR scan-on-push result for both variants. A missing or
 failed scan and any critical-severity finding block promotion; high-severity
