@@ -102,7 +102,7 @@ jobs:
 
           - name: Launch the JIT runner
             id: runner
-            uses: reaver-project/infrastructure/actions/ephemeral-runner@04c7d391f906f43826f5c7715944cd510f18ea9f
+            uses: reaver-project/infrastructure/actions/ephemeral-runner@132ed896554f1ef8055415f101e6009c3035daed
             with:
                 aws-region: ${{ vars.AWS_REGION }}
                 expected-contract-version: '4'
@@ -254,7 +254,7 @@ jobs:
 
         steps:
           - name: Terminate the runner
-            uses: reaver-project/infrastructure/actions/ephemeral-runner@04c7d391f906f43826f5c7715944cd510f18ea9f
+            uses: reaver-project/infrastructure/actions/ephemeral-runner@132ed896554f1ef8055415f101e6009c3035daed
             with:
                 aws-region: ${{ vars.AWS_REGION }}
                 instance-id: ${{ needs.provision.outputs.instance_id }}
