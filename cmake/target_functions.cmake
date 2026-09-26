@@ -213,6 +213,30 @@ function(reaveros_automatic_components _prefix)
     endforeach()
 endfunction()
 
+function(reaveros_patch_dependency output_file external_project source_revision)
+    # Checkout mtimes differ between CI jobs even when the patch contents do not.
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${ARGN})
+    set(_inputs "revision:${source_revision}\n")
+    foreach (_patch_file IN LISTS ARGN)
+        file(SHA256 "${_patch_file}" _patch_hash)
+        string(APPEND _inputs "${_patch_file}:${_patch_hash}\n")
+    endforeach()
+    string(SHA256 _inputs_hash "${_inputs}")
+
+    set(_dependency "${REAVEROS_BINARY_DIR}/toolchain/${external_project}-patch-inputs")
+    file(MAKE_DIRECTORY "${REAVEROS_BINARY_DIR}/toolchain")
+    if (EXISTS "${_dependency}")
+        file(READ "${_dependency}" _previous_hash)
+    else()
+        set(_previous_hash "")
+    endif()
+    if (NOT _previous_hash STREQUAL _inputs_hash)
+        file(WRITE "${_dependency}" "${_inputs_hash}")
+    endif()
+
+    set(${output_file} "${_dependency}" PARENT_SCOPE)
+endfunction()
+
 function(reaveros_add_ep_prune_target external_project)
     ExternalProject_Get_Property(${external_project} STAMP_DIR)
 
