@@ -38,4 +38,6 @@ then
     exit 1
 fi
 
+"${repo_root}/docker/test-prune-image"
+
 printf 'CI image-build tests passed.\n'

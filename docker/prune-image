@@ -10,6 +10,8 @@ fi
 
 unpruned_image=$1
 pruned_image=$2
+self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+repo_root=$(git -C "${self_dir}" rev-parse --show-toplevel)
 container="reaveros-docker-prune-${$}"
 
 cleanup()
@@ -18,7 +20,9 @@ cleanup()
 }
 trap cleanup EXIT
 
-docker run --name "${container}" "${unpruned_image}" /usr/bin/env bash -c '
+docker run --name "${container}" \
+    --volume "${repo_root}:/reaveros:ro" \
+    "${unpruned_image}" /usr/bin/env bash -c '
     set -euo pipefail
     cd /build
     make all-toolchain-prune -j"$(nproc)"

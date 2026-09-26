@@ -64,7 +64,8 @@ version. The shared validator also proves that an automatic update changes no
 files or workflow content beyond exact action-pin and contract substitutions.
 
 Pushes and scheduled runs on the protected default branch are approved and may
-publish caches. The checked-in copied-PR workflow promotes only candidate
+publish caches only when the current main commit is signature-verified. The
+checked-in copied-PR workflow promotes only candidate
 caches. A separate production promotion role trusts only the main-branch
 cache-promotion workflow; the PR-capable role cannot write production ECR images.
 An admitted workflow edit can request GitHub package-write permission, so

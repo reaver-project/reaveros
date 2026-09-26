@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $(basename -- "$0") == docker ]]; then
+    printf '%s\n' "$@" >> "${PRUNE_TEST_LOG}"
+    if [[ $1 == export ]]; then
+        printf 'test image contents'
+    elif [[ $1 == import ]]; then
+        cat > /dev/null
+    fi
+    exit
+fi
+
+self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+repo_root=$(git -C "${self_dir}" rev-parse --show-toplevel)
+test_directory=$(mktemp -d)
+mkdir "${test_directory}/bin"
+ln -s "${self_dir}/test-prune-image" "${test_directory}/bin/docker"
+export PATH="${test_directory}/bin:${PATH}"
+export PRUNE_TEST_LOG="${test_directory}/calls"
+: > "${PRUNE_TEST_LOG}"
+
+cleanup()
+{
+    rm -r -- "${test_directory}"
+}
+trap cleanup EXIT
+
+"${self_dir}/prune-image" \
+    example.invalid/reaveros-unpruned:test \
+    example.invalid/reaveros-pruned:test
+
+if ! grep --fixed-strings --line-regexp --quiet \
+    "${repo_root}:/reaveros:ro" "${PRUNE_TEST_LOG}"; then
+    printf 'The pruning container did not mount the real source tree.\n' >&2
+    exit 1
+fi
+
+printf 'Build-environment pruning tests passed.\n'

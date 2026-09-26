@@ -4,7 +4,11 @@ set -euo pipefail
 
 if [[ $(basename -- "$0") == gh ]]
 then
-    printf '%s\n' "${AUTHORIZE_TEST_PULL_REQUEST}"
+    if [[ $2 == repos/reaver-project/reaveros/commits/* ]]; then
+        printf '%s\n' "${AUTHORIZE_TEST_SIGNATURE_VALID}"
+    else
+        printf '%s\n' "${AUTHORIZE_TEST_PULL_REQUEST}"
+    fi
     exit
 fi
 
@@ -27,6 +31,7 @@ jq --null-input \
 
 current_sha=0123456789abcdef0123456789abcdef01234567
 export AUTHORIZE_TEST_PULL_REQUEST
+export AUTHORIZE_TEST_SIGNATURE_VALID=true
 AUTHORIZE_TEST_PULL_REQUEST=$(jq --null-input --compact-output \
     --arg sha "${current_sha}" \
     '{
@@ -98,6 +103,13 @@ run_case dispatch-main workflow_dispatch main "${current_sha}" griwes \
     true true main ''
 run_case dispatch-feature workflow_dispatch feature/example "${current_sha}" griwes \
     false false feature/example ''
+
+AUTHORIZE_TEST_SIGNATURE_VALID=false
+run_case unsigned-main push main "${current_sha}" griwes false false main ''
+run_case unsigned-schedule schedule main "${current_sha}" github false false main ''
+run_case unsigned-dispatch workflow_dispatch main "${current_sha}" griwes \
+    false false main ''
+AUTHORIZE_TEST_SIGNATURE_VALID=true
 
 AUTHORIZE_TEST_PULL_REQUEST=$(jq \
     '.head.sha = "fedcba9876543210fedcba9876543210fedcba98"' \
