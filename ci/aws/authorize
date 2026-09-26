@@ -106,6 +106,17 @@ case "${event_name}" in
         ;;
 esac
 
+if [[ ${approved} == true && ${publish_cache} == true ]]; then
+    if [[ ! ${source_sha} =~ ^[0-9a-f]{40}$ ]] ||
+        [[ $(gh api "repos/${GITHUB_REPOSITORY}/commits/${source_sha}" \
+            --jq '.commit.verification.verified') != true ]]; then
+        approved=false
+        publish_cache=false
+        refresh_cache=false
+        reason='default branch commit is not signature-verified'
+    fi
+fi
+
 {
     printf 'approved=%s\n' "${approved}"
     printf 'publish_cache=%s\n' "${publish_cache}"
