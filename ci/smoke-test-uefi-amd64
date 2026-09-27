@@ -42,7 +42,7 @@ rm -f "${serial_log}"
 qemu-system-x86_64 \
     -drive "if=pflash,format=raw,readonly=on,file=${ovmf_code}" \
     -drive "if=pflash,format=raw,file=${ovmf_vars}" \
-    -drive "format=raw,readonly=on,file=${image}" \
+    -drive "format=raw,snapshot=on,file=${image}" \
     -monitor none \
     -serial "file:${serial_log}" \
     -cpu qemu64,+sse3,+sse4.1,+sse4.2 \
