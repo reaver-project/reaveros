@@ -60,11 +60,10 @@ verify_image_scan()
         return 1
     fi
 
-    if ! severity_counts=$(aws ecr describe-image-scan-findings \
+    if ! scan_report=$(aws ecr describe-image-scan-findings \
         --region "${AWS_REGION}" \
         --repository-name "${repository_name}" \
         --image-id "imageTag=${source_tag}" \
-        --query imageScanFindings.findingSeverityCounts \
         --output json)
     then
         printf 'Could not read image vulnerability findings for %s:%s.\n' \
@@ -72,21 +71,65 @@ verify_image_scan()
         return 1
     fi
 
-    critical_findings=$(jq --exit-status --raw-output \
-        '.CRITICAL // 0 | numbers' <<< "${severity_counts}")
-    high_findings=$(jq --exit-status --raw-output \
-        '.HIGH // 0 | numbers' <<< "${severity_counts}")
+    if ! jq --exit-status \
+        '(.imageScanStatus.status == "COMPLETE")
+         and (.imageScanFindings.findingSeverityCounts | type == "object")
+         and (.imageScanFindings.findings | type == "array")' \
+        <<< "${scan_report}" > /dev/null
+    then
+        printf 'Image scan report is incomplete for %s:%s.\n' \
+            "${repository_uri}" "${source_tag}" >&2
+        return 1
+    fi
+    if ! jq --exit-status '
+        def severities: ["INFORMATIONAL", "LOW", "MEDIUM", "HIGH", "CRITICAL", "UNDEFINED"];
+        .imageScanFindings as $scan
+        | (all($scan.findings[]; .severity as $severity | (severities | index($severity)) != null))
+          and (all($scan.findingSeverityCounts | to_entries[];
+              .key as $severity | (severities | index($severity)) != null
+              and (.value | type == "number")))
+          and (all(severities[]; . as $severity
+              | ($scan.findingSeverityCounts[$severity] // 0)
+                == ([$scan.findings[] | select(.severity == $severity)] | length)))
+    ' <<< "${scan_report}" > /dev/null
+    then
+        printf 'Image scan summary and finding list disagree on severity counts.\n' >&2
+        return 1
+    fi
 
-    printf 'Image scan for %s:%s found %s critical and %s high severity vulnerabilities.\n' \
+    critical_findings=$(jq --exit-status --raw-output \
+        '.imageScanFindings.findingSeverityCounts.CRITICAL // 0 | numbers' <<< "${scan_report}")
+    high_findings=$(jq --exit-status --raw-output \
+        '.imageScanFindings.findingSeverityCounts.HIGH // 0 | numbers' <<< "${scan_report}")
+    # Debian attributes runtime-kernel CVEs to linux-libc-dev's source package.
+    # Image preparation requires linux-libc-dev to be the only binary from it.
+    header_only_critical=$(jq '
+        [.imageScanFindings.findings[]
+         | select(.severity == "CRITICAL")
+         | select((.description // "") | startswith("In the Linux kernel"))
+         | select([.attributes[]? | select(.key == "package_name") | .value] == ["linux"])
+         | select([.attributes[]? | select(.key == "package_version") | .value] as $versions
+             | ($versions | length) == 1
+               and ($versions[0] | type == "string" and . != ""))]
+        | length
+    ' <<< "${scan_report}")
+
+    printf 'Image scan for %s:%s found %s critical (%s header-only Linux) and %s high severity vulnerabilities.\n' \
         "${repository_uri}" \
         "${source_tag}" \
         "${critical_findings}" \
+        "${header_only_critical}" \
         "${high_findings}"
 
-    if ((critical_findings != 0))
+    if ((critical_findings != header_only_critical))
     then
-        printf 'Refusing to promote an image with critical vulnerabilities.\n' >&2
+        printf 'Refusing to promote an image with non-exempt critical vulnerabilities.\n' >&2
         return 1
+    fi
+    if ((header_only_critical != 0))
+    then
+        printf '::warning::The build image has %s runtime-kernel findings attributed to linux-libc-dev headers.\n' \
+            "${header_only_critical}"
     fi
     if ((high_findings != 0))
     then
