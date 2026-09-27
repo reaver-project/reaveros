@@ -39,5 +39,7 @@ then
 fi
 
 "${repo_root}/docker/test-prune-image"
+cmake -DTEST_DIRECTORY="${test_directory}/patch-dependencies" \
+    -P "${self_dir}/test-toolchain-patch-dependencies.cmake"
 
 printf 'CI image-build tests passed.\n'
