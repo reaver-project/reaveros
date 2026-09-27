@@ -258,6 +258,7 @@ function(reaveros_add_ep_prune_target external_project)
     file(TOUCH ${STAMP_DIR}/${external_project}-build)
     file(TOUCH ${STAMP_DIR}/${external_project}-install)
 
+    # The pruned source checkout cannot run apply-patches again.
     set(_commands
         COMMAND rm -rf <SOURCE_DIR> <BINARY_DIR>
         COMMAND ${force_download_stamp_rm_cmd}
@@ -265,6 +266,7 @@ function(reaveros_add_ep_prune_target external_project)
         COMMAND touch ${STAMP_DIR}/${external_project}-set-to-tag
         COMMAND touch ${STAMP_DIR}/${external_project}-skip-update
         COMMAND touch ${STAMP_DIR}/${external_project}-patch
+        COMMAND touch ${STAMP_DIR}/${external_project}-apply-patches
         COMMAND touch ${STAMP_DIR}/${external_project}-configure
         COMMAND touch ${STAMP_DIR}/${external_project}-build
         COMMAND touch ${STAMP_DIR}/${external_project}-install
