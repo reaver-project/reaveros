@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+linux_packages=$(dpkg-query -W -f='${db:Status-Status} ${source:Package} ${binary:Package}\n' \
+    | awk '$1 == "installed" && $2 == "linux" { print $3 }')
+if [[ ${linux_packages} != linux-libc-dev ]]
+then
+    printf 'Expected only linux-libc-dev from the Linux source package, found: %s\n' \
+        "${linux_packages:-none}" >&2
+    exit 1
+fi
+
+curl_packages=$(dpkg-query -W -f='${db:Status-Status} ${source:Package} ${binary:Package} ${Version}\n' \
+    | awk '$1 == "installed" && $2 == "curl" { print $3, $4 }')
+if [[ -z ${curl_packages} ]]
+then
+    printf 'No installed packages from the curl source package were found.\n' >&2
+    exit 1
+fi
+while read -r package version
+do
+    if ! dpkg --compare-versions "${version}" ge 8.21.0
+    then
+        printf '%s has curl version %s, older than 8.21.0.\n' \
+            "${package}" "${version}" >&2
+        exit 1
+    fi
+done <<< "${curl_packages}"

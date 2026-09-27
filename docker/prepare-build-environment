@@ -24,28 +24,4 @@ apt-get install --yes --target-release "${reaveros_build_environment_release}-ba
 apt-get full-upgrade --yes
 apt-get clean
 
-linux_packages=$(dpkg-query -W -f='${source:Package} ${binary:Package}\n' \
-    | awk '$1 == "linux" { print $2 }')
-if [[ ${linux_packages} != linux-libc-dev ]]
-then
-    printf 'Expected only linux-libc-dev from the Linux source package, found: %s\n' \
-        "${linux_packages:-none}" >&2
-    exit 1
-fi
-
-curl_packages=$(dpkg-query -W -f='${source:Package} ${binary:Package} ${Version}\n' \
-    | awk '$1 == "curl" { print $2, $3 }')
-if [[ -z ${curl_packages} ]]
-then
-    printf 'No installed packages from the curl source package were found.\n' >&2
-    exit 1
-fi
-while read -r package version
-do
-    if ! dpkg --compare-versions "${version}" ge 8.21.0
-    then
-        printf '%s has curl version %s, older than 8.21.0.\n' \
-            "${package}" "${version}" >&2
-        exit 1
-    fi
-done <<< "${curl_packages}"
+/usr/bin/env bash /reaveros/docker/verify-build-environment-packages

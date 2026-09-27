@@ -39,6 +39,7 @@ then
 fi
 
 "${repo_root}/docker/test-prune-image"
+"${repo_root}/docker/test-verify-build-environment-packages"
 cmake -DTEST_DIRECTORY="${test_directory}/patch-dependencies" \
     -P "${self_dir}/test-toolchain-patch-dependencies.cmake"
 

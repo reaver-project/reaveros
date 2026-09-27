@@ -31,6 +31,7 @@ docker run \
         /usr/bin/env bash /reaveros/docker/prepare-build-environment
         mkdir /build
         /reaveros/docker/build-toolchain
+        /usr/bin/env bash /reaveros/docker/verify-build-environment-packages
     '
 
 docker export "${container}" \

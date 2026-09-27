@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $(basename -- "$0") == dpkg-query ]]
+then
+    if [[ $* == *'${Version}'* ]]
+    then
+        case ${VERIFY_PACKAGES_TEST_CASE} in
+            missing-curl)
+                printf 'config-files curl libcurl4t64 8.14.1-2+deb13u5\n'
+                ;;
+            old-curl)
+                printf 'installed curl libcurl4t64 8.14.1-2+deb13u5\n'
+                ;;
+            removed-curl)
+                printf 'installed curl libcurl4t64 8.21.0-2~bpo13+1\n'
+                printf 'config-files curl libcurl-old 8.14.1-2+deb13u5\n'
+                ;;
+            *) printf 'installed curl libcurl4t64 8.21.0-2~bpo13+1\n' ;;
+        esac
+    else
+        case ${VERIFY_PACKAGES_TEST_CASE} in
+            missing-linux) printf 'config-files linux linux-libc-dev\n' ;;
+            extra-linux)
+                printf 'installed linux linux-libc-dev\ninstalled linux linux-image-amd64\n'
+                ;;
+            removed-linux)
+                printf 'installed linux linux-libc-dev\n'
+                printf 'config-files linux linux-image-amd64\n'
+                ;;
+            *) printf 'installed linux linux-libc-dev\n' ;;
+        esac
+    fi
+    exit
+fi
+
+self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+test_directory=$(mktemp -d)
+trap 'rm -rf "${test_directory}"' EXIT
+ln -s "${self_dir}/test-verify-build-environment-packages" "${test_directory}/dpkg-query"
+export PATH="${test_directory}:${PATH}"
+
+export VERIFY_PACKAGES_TEST_CASE=valid
+"${self_dir}/verify-build-environment-packages"
+for allowed_case in removed-linux removed-curl
+do
+    export VERIFY_PACKAGES_TEST_CASE=${allowed_case}
+    "${self_dir}/verify-build-environment-packages"
+done
+
+for failure_case in missing-linux extra-linux missing-curl old-curl
+do
+    export VERIFY_PACKAGES_TEST_CASE=${failure_case}
+    if "${self_dir}/verify-build-environment-packages" > /dev/null 2>&1
+    then
+        printf 'Accepted invalid package inventory: %s.\n' "${failure_case}" >&2
+        exit 1
+    fi
+done
+
+printf 'Build-environment package verification tests passed.\n'

@@ -26,6 +26,7 @@ docker run --name "${container}" \
     set -euo pipefail
     cd /build
     make all-toolchain-prune -j"$(nproc)"
+    /usr/bin/env bash /reaveros/docker/verify-build-environment-packages
 '
 
 docker export "${container}" \

@@ -73,4 +73,5 @@ fi
 
 /usr/bin/env bash /reaveros/docker/prepare-build-environment
 make all-toolchain -j"$(nproc)"
+/usr/bin/env bash /reaveros/docker/verify-build-environment-packages
 printf 'reaveros_update_result=updated\n'
