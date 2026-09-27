@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $# -ne 1 ]]
+then
+    printf 'usage: %s <image>\n' "$0" >&2
+    exit 2
+fi
+
+self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=docker/build-environment.conf
+source "${self_dir}/build-environment.conf"
+
+docker run --rm "$1" /usr/bin/env sh -c '
+    grep -Fxq "ID=debian" /etc/os-release \
+        && grep -Fxq "VERSION_CODENAME=$1" /etc/os-release
+' -- "${reaveros_build_environment_release}"

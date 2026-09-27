@@ -71,11 +71,6 @@ then
     exit 0
 fi
 
-# shellcheck source=docker/build-environment.conf
-source /reaveros/docker/build-environment.conf
-apt-get update
-apt-get install --yes "${reaveros_build_environment_packages[@]}"
-apt-get full-upgrade --yes
-apt-get clean
+/usr/bin/env bash /reaveros/docker/prepare-build-environment
 make all-toolchain -j"$(nproc)"
 printf 'reaveros_update_result=updated\n'

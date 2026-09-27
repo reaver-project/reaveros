@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+# shellcheck source=docker/build-environment.conf
+source /reaveros/docker/build-environment.conf
+
+if ! grep -Fxq 'ID=debian' /etc/os-release \
+    || ! grep -Fxq "VERSION_CODENAME=${reaveros_build_environment_release}" /etc/os-release
+then
+    printf 'The build-environment image does not use Debian %s.\n' \
+        "${reaveros_build_environment_release}" >&2
+    exit 1
+fi
+
+export DEBIAN_FRONTEND=noninteractive
+printf 'deb http://deb.debian.org/debian %s-backports main\n' \
+    "${reaveros_build_environment_release}" \
+    > /etc/apt/sources.list.d/reaveros-backports.list
+apt-get update
+apt-get install --yes "${reaveros_build_environment_packages[@]}"
+apt-get install --yes --target-release "${reaveros_build_environment_release}-backports" \
+    "${reaveros_build_environment_backports_packages[@]}"
+apt-get full-upgrade --yes
+apt-get clean
+
+linux_packages=$(dpkg-query -W -f='${source:Package} ${binary:Package}\n' \
+    | awk '$1 == "linux" { print $2 }')
+if [[ ${linux_packages} != linux-libc-dev ]]
+then
+    printf 'Expected only linux-libc-dev from the Linux source package, found: %s\n' \
+        "${linux_packages:-none}" >&2
+    exit 1
+fi
+
+curl_packages=$(dpkg-query -W -f='${source:Package} ${binary:Package} ${Version}\n' \
+    | awk '$1 == "curl" { print $2, $3 }')
+if [[ -z ${curl_packages} ]]
+then
+    printf 'No installed packages from the curl source package were found.\n' >&2
+    exit 1
+fi
+while read -r package version
+do
+    if ! dpkg --compare-versions "${version}" ge 8.21.0
+    then
+        printf '%s has curl version %s, older than 8.21.0.\n' \
+            "${package}" "${version}" >&2
+        exit 1
+    fi
+done <<< "${curl_packages}"
