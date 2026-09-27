@@ -230,7 +230,7 @@ private:
     }
 
     std::filesystem::path _filename;
-    std::fstream _input;
+    std::ifstream _input;
     token _current;
 
     std::uintptr_t _line = 1;
