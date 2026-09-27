@@ -42,4 +42,20 @@ fi
 cmake -DTEST_DIRECTORY="${test_directory}/patch-dependencies" \
     -P "${self_dir}/test-toolchain-patch-dependencies.cmake"
 
+prune_build_directory="${test_directory}/prune-stamps"
+cmake -S "${repo_root}" -B "${prune_build_directory}" -DREAVEROS_ENABLE_UNIT_TESTS=ON >/dev/null
+cmake --build "${prune_build_directory}" \
+    --target toolchain-cmake-prune toolchain-llvm-prune >/dev/null
+for project in toolchain-cmake toolchain-llvm
+do
+    stamp_directory="${prune_build_directory}/toolchain/${project}-prefix/src/${project}-stamp"
+    if [[ ! -f ${stamp_directory}/${project}-apply-patches \
+        || ${stamp_directory}/${project}-apply-patches -ot ${stamp_directory}/${project}-set-to-tag \
+        || ${stamp_directory}/${project}-apply-patches -ot ${prune_build_directory}/toolchain/${project}-patch-inputs ]]
+    then
+        printf 'Pruning left the %s patch step out of date.\n' "${project}" >&2
+        exit 1
+    fi
+done
+
 printf 'CI image-build tests passed.\n'
