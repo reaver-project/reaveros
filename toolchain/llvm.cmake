@@ -77,6 +77,9 @@ endforeach()
 set(patch_files
     ${CMAKE_CURRENT_LIST_DIR}/llvm/patches/000-reaveros-support-with-less-plt.patch
 )
+reaveros_patch_dependency(
+    patch_dependency toolchain-llvm ${REAVEROS_LLVM_REVISION} ${patch_files}
+)
 
 ExternalProject_Add(toolchain-llvm
     GIT_REPOSITORY ${REAVEROS_LLVM_REPO}
@@ -123,7 +126,7 @@ ExternalProject_Add_Step(toolchain-llvm
     COMMAND git apply ${patch_files}
     DEPENDEES set-to-tag
     DEPENDERS configure
-    DEPENDS ${patch_files}
+    DEPENDS ${patch_dependency}
     WORKING_DIRECTORY <SOURCE_DIR>
 )
 reaveros_add_ep_prune_target(toolchain-llvm)

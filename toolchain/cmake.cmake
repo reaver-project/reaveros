@@ -1,6 +1,9 @@
 set(patch_files
     ${CMAKE_CURRENT_LIST_DIR}/cmake/patches/000-reaveros.patch
 )
+reaveros_patch_dependency(
+    patch_dependency toolchain-cmake ${REAVEROS_CMAKE_REVISION} ${patch_files}
+)
 
 ExternalProject_Add(toolchain-cmake
     GIT_REPOSITORY ${REAVEROS_CMAKE_REPO}
@@ -30,7 +33,7 @@ ExternalProject_Add_Step(toolchain-cmake
     COMMAND git apply ${patch_files}
     DEPENDEES set-to-tag
     DEPENDERS configure
-    DEPENDS ${patch_files}
+    DEPENDS ${patch_dependency}
     WORKING_DIRECTORY <SOURCE_DIR>
 )
 reaveros_add_ep_prune_target(toolchain-cmake)
