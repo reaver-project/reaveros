@@ -14,6 +14,7 @@ reaver_project_compiler_cache_options()
     local container_directory=${REAVER_PROJECT_SCCACHE_CONTAINER_DIR:-}
     if [[ ${host_directory} != /* || ! -d ${host_directory} \
         || ! -x ${host_directory}/sccache \
+        || ! -f ${host_directory}/LICENSE \
         || ! -S ${host_directory}/sccache.sock \
         || ${container_directory} != /run/reaver-project/compiler-cache ]]
     then

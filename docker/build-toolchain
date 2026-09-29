@@ -36,12 +36,15 @@ then
     cache_directory=${REAVER_PROJECT_SCCACHE_CONTAINER_DIR}
     if [[ ${cache_directory} != /run/reaver-project/compiler-cache \
         || ! -x ${cache_directory}/sccache \
+        || ! -f ${cache_directory}/LICENSE \
         || ! -S ${cache_directory}/sccache.sock ]]
     then
         printf 'The container compiler-cache client or socket is unavailable.\n' >&2
         exit 1
     fi
     install -m 0755 "${cache_directory}/sccache" /usr/local/bin/sccache
+    install -d /usr/share/doc/sccache
+    install -m 0644 "${cache_directory}/LICENSE" /usr/share/doc/sccache/LICENSE
     cache_configuration=(-DREAVEROS_CACHE_PROGRAM=sccache)
 fi
 cd "${build_directory}"

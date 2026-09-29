@@ -20,6 +20,7 @@ cleanup()
 }
 trap cleanup EXIT
 install -m 0755 /usr/bin/true "${test_directory}/sccache"
+install -m 0644 "${self_dir}/../LICENSE" "${test_directory}/LICENSE"
 python3 -c '
 import socket
 import sys
