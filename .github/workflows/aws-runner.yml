@@ -107,9 +107,10 @@ jobs:
             uses: reaver-project/infrastructure/actions/ephemeral-runner@c6a0fad8e1d37e9316ee97dff058aa367795966d
             with:
                 aws-region: ${{ vars.AWS_REGION }}
+                control-function-output: ${{ github.ref == 'refs/heads/main' && 'TrustedRunnerControlFunctionName' || 'RunnerControlFunctionName' }}
                 expected-contract-version: '5'
                 operation: launch
-                role-arn: ${{ vars.AWS_RUNNER_ROLE_ARN }}
+                role-arn: ${{ github.ref == 'refs/heads/main' && vars.AWS_TRUSTED_RUNNER_ROLE_ARN || vars.AWS_RUNNER_ROLE_ARN }}
                 runner-key: ${{ inputs.target == '' && inputs.task || format('{0}-{1}', inputs.task, inputs.target) }}
                 runner-profile: ${{ inputs.task == 'prepare' && 'builder' || 'validation' }}
                 runner-size: ${{ inputs.runner_size }}
@@ -148,6 +149,14 @@ jobs:
                 repository: ${{ github.repository }}
                 ref: ${{ github.sha }}
                 persist-credentials: false
+
+          - name: Configure the host compiler cache
+            if: inputs.task == 'prepare'
+            uses: reaver-project/infrastructure/actions/compiler-cache@c6a0fad8e1d37e9316ee97dff058aa367795966d
+            with:
+                aws-region: ${{ vars.AWS_REGION }}
+                project-slug: reaveros
+                stack-name: ${{ vars.AWS_RUNNER_STACK_NAME }}
 
           - name: Configure the build-environment cache
             if: inputs.task != 'boot'
@@ -228,6 +237,16 @@ jobs:
                     docker push "$(./docker/image-ref unpruned)"
                 fi
 
+          - name: Report compiler-cache use
+            if: always() && inputs.task == 'prepare'
+            env:
+                SCCACHE_SERVER_UDS: ${{ env.REAVER_PROJECT_SCCACHE_HOST_SOCKET }}
+            run: |
+                if [[ -n ${SCCACHE_SERVER_UDS:-} && -S ${SCCACHE_SERVER_UDS} ]]
+                then
+                    "${REAVER_PROJECT_SCCACHE_HOST_DIR}/sccache" --show-stats
+                fi
+
           - name: Check build-system dependencies
             if: inputs.task == 'build-dependencies'
             run: ./ci/check-build-dependencies '${{ inputs.target }}' "${BUILD_ENVIRONMENT_IMAGE}"
@@ -287,7 +306,8 @@ jobs:
             uses: reaver-project/infrastructure/actions/ephemeral-runner@c6a0fad8e1d37e9316ee97dff058aa367795966d
             with:
                 aws-region: ${{ vars.AWS_REGION }}
+                control-function-output: ${{ github.ref == 'refs/heads/main' && 'TrustedRunnerControlFunctionName' || 'RunnerControlFunctionName' }}
                 instance-id: ${{ needs.provision.outputs.instance_id }}
                 operation: terminate
-                role-arn: ${{ vars.AWS_RUNNER_ROLE_ARN }}
+                role-arn: ${{ github.ref == 'refs/heads/main' && vars.AWS_TRUSTED_RUNNER_ROLE_ARN || vars.AWS_RUNNER_ROLE_ARN }}
                 stack-name: ${{ vars.AWS_RUNNER_STACK_NAME }}
