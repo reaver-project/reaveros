@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+prefix=123456789012.dkr.ecr.us-west-2.amazonaws.com/
+report=$(jq --null-input --compact-output --arg prefix "${prefix}" '{
+    BuildEnvironmentRepositoryUri: ($prefix + "reaveros-build"),
+    UnprunedBuildEnvironmentRepositoryUri: ($prefix + "reaveros-unpruned"),
+    CandidateBuildEnvironmentRepositoryUri: ($prefix + "reaveros-candidate"),
+    CandidateUnprunedBuildEnvironmentRepositoryUri: ($prefix + "reaveros-candidate-unpruned"),
+    StagingBuildEnvironmentRepositoryUri: ($prefix + "reaveros-staging"),
+    StagingUnprunedBuildEnvironmentRepositoryUri: ($prefix + "reaveros-staging-unpruned")
+}')
+
+names=$("${self_dir}/strip-ecr-registry" us-west-2 <<< "${report}")
+if ! jq --exit-status '
+    length == 6
+    and .BuildEnvironmentRepositoryUri == "reaveros-build"
+    and .StagingUnprunedBuildEnvironmentRepositoryUri == "reaveros-staging-unpruned"
+    and (all(.[]; startswith("123456789012.") | not))
+' <<< "${names}" > /dev/null
+then
+    printf 'ECR repository names were not stripped correctly.\n' >&2
+    exit 1
+fi
+
+for invalid_report in \
+    "$(jq --compact-output 'del(.CandidateBuildEnvironmentRepositoryUri)' <<< "${report}")" \
+    "$(jq --compact-output '.StagingBuildEnvironmentRepositoryUri = ""' <<< "${report}")" \
+    "$(jq --compact-output '.StagingBuildEnvironmentRepositoryUri |= sub("123456789012"; "999999999999")' <<< "${report}")" \
+    "$(jq --compact-output '.StagingBuildEnvironmentRepositoryUri += "\nmalformed"' <<< "${report}")"
+do
+    if "${self_dir}/strip-ecr-registry" us-west-2 \
+        <<< "${invalid_report}" > /dev/null 2>&1
+    then
+        printf 'Accepted an invalid ECR stack output.\n' >&2
+        exit 1
+    fi
+done
+
+if "${self_dir}/strip-ecr-registry" us-east-1 \
+    <<< "${report}" > /dev/null 2>&1
+then
+    printf 'Accepted an ECR registry in the wrong AWS region.\n' >&2
+    exit 1
+fi
+
+printf 'ECR repository name transfer tests passed.\n'
