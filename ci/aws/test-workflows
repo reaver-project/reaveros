@@ -162,6 +162,21 @@ then
     exit 1
 fi
 
+# GitHub expression syntax is intentionally literal in these invariants.
+# shellcheck disable=SC2016
+if [[ $(grep --fixed-strings --count \
+    'cache_tag: ${{ needs.build-environment-ready.outputs.cache_tag }}' \
+    "${ci_workflow}") -ne 4 ]] \
+    || ! grep --fixed-strings --quiet \
+        'cache_tag: ${{ steps.ready.outputs.cache_tag }}' "${ci_workflow}" \
+    || ! grep --fixed-strings --quiet \
+        'source_tag: ${{ needs.build-environment-ready.outputs.cache_tag }}' \
+        "${ci_workflow}"
+then
+    printf 'Rerun jobs must use the tag produced by successful preparation.\n' >&2
+    exit 1
+fi
+
 for reusable_workflow in \
     "${repo_root}/.github/workflows/aws-runner.yml" \
     "${repo_root}/.github/workflows/aws-cache-promotion.yml"

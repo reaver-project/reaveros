@@ -220,10 +220,14 @@ jobs:
           - build-environment-large
         runs-on: ubuntu-latest
         timeout-minutes: 5
+        outputs:
+            cache_tag: ${{ steps.ready.outputs.cache_tag }}
 
         steps:
           - name: Check preparation result
+            id: ready
             env:
+                CACHE_TAG: run-${{ github.run_id }}-${{ github.run_attempt }}
                 LARGE_READY: ${{ needs.build-environment-large.outputs.ready }}
                 LARGE_RESULT: ${{ needs.build-environment-large.result }}
                 MEDIUM_NEEDS_LARGE: ${{ needs.build-environment.outputs.needs_large }}
@@ -250,6 +254,8 @@ jobs:
                     exit 1
                 fi
 
+                printf 'cache_tag=%s\n' "${CACHE_TAG}" >> "${GITHUB_OUTPUT}"
+
     build-dependencies:
         name: Check build-system dependencies (${{ matrix.arch }})
         needs:
@@ -265,7 +271,7 @@ jobs:
                   - amd64
         uses: ./.github/workflows/aws-runner.yml
         with:
-            cache_tag: run-${{ github.run_id }}-${{ github.run_attempt }}
+            cache_tag: ${{ needs.build-environment-ready.outputs.cache_tag }}
             runner_size: medium
             target: ${{ matrix.arch }}
             task: build-dependencies
@@ -285,7 +291,7 @@ jobs:
                   - amd64
         uses: ./.github/workflows/aws-runner.yml
         with:
-            cache_tag: run-${{ github.run_id }}-${{ github.run_attempt }}
+            cache_tag: ${{ needs.build-environment-ready.outputs.cache_tag }}
             runner_size: medium
             target: ${{ matrix.arch }}
             task: unit-tests
@@ -305,7 +311,7 @@ jobs:
                   - uefi-efipart-amd64
         uses: ./.github/workflows/aws-runner.yml
         with:
-            cache_tag: run-${{ github.run_id }}-${{ github.run_attempt }}
+            cache_tag: ${{ needs.build-environment-ready.outputs.cache_tag }}
             runner_size: medium
             target: ${{ matrix.image }}
             task: image
@@ -315,6 +321,7 @@ jobs:
         if: needs.authorize.outputs.approved == 'true' && needs.image-build.result == 'success'
         needs:
           - authorize
+          - build-environment-ready
           - image-build
         permissions:
             contents: read
@@ -326,7 +333,7 @@ jobs:
                   - uefi-efipart-amd64
         uses: ./.github/workflows/aws-runner.yml
         with:
-            cache_tag: run-${{ github.run_id }}-${{ github.run_attempt }}
+            cache_tag: ${{ needs.build-environment-ready.outputs.cache_tag }}
             runner_size: medium
             target: ${{ matrix.image }}
             task: boot
@@ -347,7 +354,7 @@ jobs:
         uses: ./.github/workflows/aws-cache-promotion.yml
         with:
             publish_cache: ${{ needs.authorize.outputs.publish_cache == 'true' }}
-            source_tag: run-${{ github.run_id }}-${{ github.run_attempt }}
+            source_tag: ${{ needs.build-environment-ready.outputs.cache_tag }}
 
     result:
         name: CI result
