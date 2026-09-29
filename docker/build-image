@@ -4,6 +4,9 @@ set -euo pipefail
 
 self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(git -C "${self_dir}" rev-parse --show-toplevel)
+# shellcheck source=docker/compiler-cache.sh
+source "${self_dir}/compiler-cache.sh"
+reaver_project_compiler_cache_options
 
 # shellcheck source=docker/build-environment.conf
 source "${self_dir}/build-environment.conf"
@@ -25,6 +28,7 @@ docker pull "${reaveros_build_environment_base_image}"
 docker run \
     --name "${container}" \
     --volume "${repo_root}:/reaveros:ro" \
+    "${reaver_project_compiler_cache_args[@]}" \
     "${reaveros_build_environment_base_image}" \
     /usr/bin/env bash -c '
         set -euo pipefail

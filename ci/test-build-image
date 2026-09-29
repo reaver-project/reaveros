@@ -40,6 +40,8 @@ fi
 
 "${repo_root}/docker/test-prune-image"
 "${repo_root}/docker/test-verify-build-environment-packages"
+"${repo_root}/docker/test-compiler-cache-options"
+"${repo_root}/ci/test-cache-launcher"
 "${repo_root}/ci/aws/test-strip-ecr-registry"
 cmake -DTEST_DIRECTORY="${test_directory}/patch-dependencies" \
     -P "${self_dir}/test-toolchain-patch-dependencies.cmake"
