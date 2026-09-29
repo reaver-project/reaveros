@@ -153,6 +153,8 @@ jobs:
           - name: Configure the host compiler cache
             if: inputs.task == 'prepare'
             uses: reaver-project/infrastructure/actions/compiler-cache@c6a0fad8e1d37e9316ee97dff058aa367795966d
+            env:
+                SCCACHE_SKIP_CACHE_CHECK: 'true'
             with:
                 aws-region: ${{ vars.AWS_REGION }}
                 project-slug: reaveros

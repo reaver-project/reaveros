@@ -182,6 +182,7 @@ done
 runner_workflow="${repo_root}/.github/workflows/aws-runner.yml"
 for compiler_cache_invariant in \
     "uses: reaver-project/infrastructure/actions/compiler-cache@${infrastructure_revision}" \
+    "SCCACHE_SKIP_CACHE_CHECK: 'true'" \
     "control-function-output: \${{ github.ref == 'refs/heads/main' && 'TrustedRunnerControlFunctionName' || 'RunnerControlFunctionName' }}" \
     "role-arn: \${{ github.ref == 'refs/heads/main' && vars.AWS_TRUSTED_RUNNER_ROLE_ARN || vars.AWS_RUNNER_ROLE_ARN }}" \
     'project-slug: reaveros'; do
