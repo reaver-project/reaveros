@@ -6,6 +6,7 @@ self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=docker/compiler-cache.sh
 source "${self_dir}/compiler-cache.sh"
 
+unset REAVER_PROJECT_SCCACHE_HOST_DIR REAVER_PROJECT_SCCACHE_CONTAINER_DIR
 reaver_project_compiler_cache_options
 if [[ ${#reaver_project_compiler_cache_args[@]} -ne 0 ]]
 then
