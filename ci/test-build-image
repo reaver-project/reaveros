@@ -44,18 +44,36 @@ fi
 "${repo_root}/ci/test-cache-launcher"
 "${repo_root}/ci/aws/test-strip-ecr-registry"
 "${self_dir}/test-toolchain-git-tag"
+"${self_dir}/test-toolchain-git-archive"
 cmake -DTEST_DIRECTORY="${test_directory}/patch-dependencies" \
     -P "${self_dir}/test-toolchain-patch-dependencies.cmake"
 
 prune_build_directory="${test_directory}/prune-stamps"
 cmake -S "${repo_root}" -B "${prune_build_directory}" -DREAVEROS_ENABLE_UNIT_TESTS=ON >/dev/null
+llvm_stamp_directory="${prune_build_directory}/toolchain/toolchain-llvm-prefix/src/toolchain-llvm-stamp"
+touch "${llvm_stamp_directory}/toolchain-llvm-mkdir"
+touch "${llvm_stamp_directory}/toolchain-llvm-download"
 cmake --build "${prune_build_directory}" \
     --target toolchain-cmake-prune toolchain-llvm-prune >/dev/null
+cmake -S "${repo_root}" -B "${prune_build_directory}" -DREAVEROS_ENABLE_UNIT_TESTS=ON >/dev/null
+if [[ ! -f ${llvm_stamp_directory}/toolchain-llvm-download \
+    || ${llvm_stamp_directory}/toolchain-llvm-download -ot ${llvm_stamp_directory}/toolchain-llvm-mkdir \
+    || ${llvm_stamp_directory}/toolchain-llvm-download -ot ${llvm_stamp_directory}/download-toolchain-llvm.cmake \
+    || ${llvm_stamp_directory}/toolchain-llvm-download -ot ${llvm_stamp_directory}/toolchain-llvm-urlinfo.txt ]]
+then
+    printf 'Pruning made LLVM download run again in the validation image.\n' >&2
+    exit 1
+fi
 for project in toolchain-cmake toolchain-llvm
 do
     stamp_directory="${prune_build_directory}/toolchain/${project}-prefix/src/${project}-stamp"
+    source_step=set-to-tag
+    if [[ ${project} == toolchain-llvm ]]
+    then
+        source_step=hydrate-source
+    fi
     if [[ ! -f ${stamp_directory}/${project}-apply-patches \
-        || ${stamp_directory}/${project}-apply-patches -ot ${stamp_directory}/${project}-set-to-tag \
+        || ${stamp_directory}/${project}-apply-patches -ot ${stamp_directory}/${project}-${source_step} \
         || ${stamp_directory}/${project}-apply-patches -ot ${prune_build_directory}/toolchain/${project}-patch-inputs ]]
     then
         printf 'Pruning left the %s patch step out of date.\n' "${project}" >&2

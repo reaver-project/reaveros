@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $# -ne 5 ]]
+then
+    printf 'usage: %s <source directory> <repository> <tag> <revision> <archive>\n' "$0" >&2
+    exit 2
+fi
+
+source_directory=$(realpath -m -- "$1")
+repository=$2
+tag=$3
+revision=$4
+archive=$(realpath -m -- "$5")
+
+if [[ ${source_directory} == / || ! ${tag} =~ ^[[:alnum:]_.-]+$ \
+    || ! ${revision} =~ ^[0-9a-f]{40}$ || ! -f ${archive} \
+    || ${archive} == "${source_directory}/"* ]]
+then
+    printf 'Invalid Git archive source, tag, revision, or archive.\n' >&2
+    exit 2
+fi
+
+if [[ ! -d ${source_directory}/.git ]]
+then
+    git clone --filter=blob:none --no-checkout --depth=1 --branch "${tag}" \
+        -- "${repository}" "${source_directory}"
+fi
+
+if [[ $(git -C "${source_directory}" remote get-url origin) != "${repository}" ]]
+then
+    printf 'The source checkout has an unexpected origin.\n' >&2
+    exit 1
+fi
+
+local_revision=$(git -C "${source_directory}" rev-parse --verify --quiet "refs/tags/${tag}^{commit}" || true)
+if [[ ${local_revision} != "${revision}" ]]
+then
+    git -C "${source_directory}" fetch --filter=blob:none --force --depth=1 \
+        origin "refs/tags/${tag}:refs/tags/${tag}"
+fi
+
+local_revision=$(git -C "${source_directory}" rev-parse --verify "refs/tags/${tag}^{commit}")
+if [[ ${local_revision} != "${revision}" ]]
+then
+    printf 'Tag %s resolves to %s, not configured revision %s.\n' \
+        "${tag}" "${local_revision}" "${revision}" >&2
+    exit 1
+fi
+
+find "${source_directory}" -mindepth 1 -maxdepth 1 ! -name .git \
+    -exec rm -rf -- {} +
+tar -xf "${archive}" --no-same-owner --strip-components=1 -C "${source_directory}"
+git -C "${source_directory}" reset --mixed --quiet "${revision}"
+
+if [[ -n $(git -C "${source_directory}" status --porcelain --ignored --untracked-files=all) ]]
+then
+    printf 'Archive contents do not match Git revision %s.\n' "${revision}" >&2
+    exit 1
+fi
