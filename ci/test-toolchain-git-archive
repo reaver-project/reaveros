@@ -22,7 +22,8 @@ commit_source()
         -c commit.gpgsign=false -c core.hooksPath=/dev/null \
         -c user.name=test -c user.email=test@example.invalid \
         commit --quiet -m "${message}"
-    git -C "${test_directory}/upstream" -c tag.gpgSign=false \
+    git -C "${test_directory}/upstream" \
+        -c tag.gpgSign=false -c user.name=test -c user.email=test@example.invalid \
         tag -a -m "${message}" "${message}"
     git -C "${test_directory}/upstream" push --quiet origin HEAD "refs/tags/${message}"
     git -C "${test_directory}/upstream" archive --format=tar \
