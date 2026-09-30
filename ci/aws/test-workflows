@@ -177,6 +177,44 @@ then
     exit 1
 fi
 
+require_ci_condition()
+{
+    job=$1
+    shift
+    condition=$(awk -v job="${job}" '
+        $0 == "    " job ":" { in_job = 1; next }
+        in_job && /^    [a-z][a-z-]*:/ { exit }
+        in_job && /^        if:/ { print; exit }
+    ' "${ci_workflow}")
+    for fragment in "$@"
+    do
+        if [[ ${condition} != *"${fragment}"* ]]
+        then
+            printf 'CI job %s is missing condition %s.\n' "${job}" "${fragment}" >&2
+            exit 1
+        fi
+    done
+}
+
+for validation_job in build-dependencies unit-tests image-build
+do
+    require_ci_condition "${validation_job}" \
+        '!cancelled()' \
+        "needs.authorize.outputs.approved == 'true'" \
+        "needs.build-environment-ready.result == 'success'"
+done
+require_ci_condition boot-smoke \
+    '!cancelled()' \
+    "needs.build-environment-ready.result == 'success'" \
+    "needs.image-build.result == 'success'"
+require_ci_condition promote-build-environment \
+    '!cancelled()' \
+    "needs.build-environment-ready.result == 'success'" \
+    "needs.build-dependencies.result == 'success'" \
+    "needs.unit-tests.result == 'success'" \
+    "needs.image-build.result == 'success'" \
+    "needs.boot-smoke.result == 'success'"
+
 for reusable_workflow in \
     "${repo_root}/.github/workflows/aws-runner.yml" \
     "${repo_root}/.github/workflows/aws-cache-promotion.yml"
