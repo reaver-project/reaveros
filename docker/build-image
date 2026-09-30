@@ -22,21 +22,17 @@ trap cleanup EXIT
 
 docker pull "${reaveros_build_environment_base_image}"
 
-packages=$(printf ' %q' "${reaveros_build_environment_packages[@]}")
 docker run \
     --name "${container}" \
     --volume "${repo_root}:/reaveros:ro" \
     "${reaveros_build_environment_base_image}" \
-    /usr/bin/env bash -c "
+    /usr/bin/env bash -c '
         set -euo pipefail
-        apt-get update
-        apt-get install --yes${packages}
-        apt-get full-upgrade --yes
-        apt-get clean
-
+        /usr/bin/env bash /reaveros/docker/prepare-build-environment
         mkdir /build
         /reaveros/docker/build-toolchain
-    "
+        /usr/bin/env bash /reaveros/docker/verify-build-environment-packages
+    '
 
 docker export "${container}" \
     | docker import --change 'CMD ["/usr/bin/env", "bash"]' - "${unpruned_image}"

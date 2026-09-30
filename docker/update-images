@@ -112,11 +112,13 @@ elif [[ -n ${fallback_unpruned_repository} ]] \
 then
     seed_image="${fallback_unpruned_repository}:${seed_tag}"
 elif [[ -n ${fallback_unpruned_repository} ]] \
-    && docker pull "${fallback_unpruned_repository}:latest"
+    && docker pull "${fallback_unpruned_repository}:latest" \
+    && "${self_dir}/image-matches-base" "${fallback_unpruned_repository}:latest"
 then
     seed_image="${fallback_unpruned_repository}:latest"
 elif [[ -z ${fallback_unpruned_repository} ]] \
-    && docker pull "${seed_unpruned_repository}:latest"
+    && docker pull "${seed_unpruned_repository}:latest" \
+    && "${self_dir}/image-matches-base" "${seed_unpruned_repository}:latest"
 then
     seed_image="${seed_unpruned_repository}:latest"
 fi

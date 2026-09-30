@@ -26,9 +26,47 @@ then
                 exit 254
             elif [[ ${PROMOTION_TEST_CASE} == critical-findings ]]
             then
-                printf '{"CRITICAL":1,"HIGH":2}\n'
+                printf '%s\n' '{"imageScanStatus":{"status":"COMPLETE"},"imageScanFindings":{"findingSeverityCounts":{"CRITICAL":1,"HIGH":2},"findings":[{"severity":"CRITICAL","description":"curl vulnerability","attributes":[{"key":"package_name","value":"curl"},{"key":"package_version","value":"8.14.1"}]},{"severity":"HIGH"},{"severity":"HIGH"}]}}'
+            elif [[ ${PROMOTION_TEST_CASE} == mixed-critical ]]
+            then
+                jq -nc '{imageScanStatus:{status:"COMPLETE"},imageScanFindings:{findingSeverityCounts:{CRITICAL:2,HIGH:2},findings:[{severity:"CRITICAL",description:"In the Linux kernel, a runtime vulnerability was fixed.",attributes:[{key:"package_name",value:"linux"},{key:"package_version",value:"6.12.107-1"}]},{severity:"CRITICAL",description:"curl vulnerability",attributes:[{key:"package_name",value:"curl"},{key:"package_version",value:"8.14.1"}]},{severity:"HIGH"},{severity:"HIGH"}]}}'
+            elif [[ ${PROMOTION_TEST_CASE} == header-only-critical ||
+                ${PROMOTION_TEST_CASE} == mismatched-count ||
+                ${PROMOTION_TEST_CASE} == non-kernel-linux-finding ||
+                ${PROMOTION_TEST_CASE} == missing-linux-version ||
+                ${PROMOTION_TEST_CASE} == duplicate-linux-version ]]
+            then
+                count=1
+                description='In the Linux kernel, a runtime vulnerability was fixed.'
+                version=6.12.107-1
+                duplicate_version=false
+                if [[ ${PROMOTION_TEST_CASE} == mismatched-count ]]
+                then
+                    count=2
+                elif [[ ${PROMOTION_TEST_CASE} == non-kernel-linux-finding ]]
+                then
+                    description='Linux userspace header vulnerability.'
+                elif [[ ${PROMOTION_TEST_CASE} == missing-linux-version ]]
+                then
+                    version=
+                elif [[ ${PROMOTION_TEST_CASE} == duplicate-linux-version ]]
+                then
+                    duplicate_version=true
+                fi
+                jq -nc --arg description "${description}" --arg version "${version}" \
+                    --argjson count "${count}" --argjson duplicate "${duplicate_version}" \
+                    '{imageScanStatus:{status:"COMPLETE"},imageScanFindings:{findingSeverityCounts:{CRITICAL:$count,HIGH:2},findings:[{severity:"CRITICAL",description:$description,attributes:([{key:"package_name",value:"linux"},{key:"package_version",value:$version}] + (if $duplicate then [{key:"package_version",value:""}] else [] end))},{severity:"HIGH"},{severity:"HIGH"}]}}'
+            elif [[ ${PROMOTION_TEST_CASE} == incomplete-report ]]
+            then
+                printf '%s\n' '{"imageScanStatus":{"status":"IN_PROGRESS"},"imageScanFindings":{"findingSeverityCounts":{},"findings":[]}}'
+            elif [[ ${PROMOTION_TEST_CASE} == mismatched-high ]]
+            then
+                printf '%s\n' '{"imageScanStatus":{"status":"COMPLETE"},"imageScanFindings":{"findingSeverityCounts":{"HIGH":2},"findings":[{"severity":"HIGH"}]}}'
+            elif [[ ${PROMOTION_TEST_CASE} == missing-severity ]]
+            then
+                printf '%s\n' '{"imageScanStatus":{"status":"COMPLETE"},"imageScanFindings":{"findingSeverityCounts":{"HIGH":1},"findings":[{}]}}'
             else
-                printf '{"HIGH":2}\n'
+                printf '%s\n' '{"imageScanStatus":{"status":"COMPLETE"},"imageScanFindings":{"findingSeverityCounts":{"HIGH":2},"findings":[{"severity":"HIGH"},{"severity":"HIGH"}]}}'
             fi
             ;;
         ecr:describe-images)
@@ -153,6 +191,11 @@ assert_log_count 6 $'skopeo\tcopy'
 assert_log_count 1 'docker://registry.example/reaveros:ci-run-101-1'
 assert_log_count 1 'docker://registry.example/reaveros-unpruned:ci-run-101-1'
 
+export PROMOTION_TEST_CASE=header-only-critical
+: > "${PROMOTION_TEST_LOG}"
+run_promotion > /dev/null
+assert_log_count 6 $'skopeo\tcopy'
+
 export PROMOTION_TEST_CASE=existing-image
 : > "${PROMOTION_TEST_LOG}"
 run_promotion > /dev/null
@@ -167,7 +210,10 @@ then
 fi
 assert_log_count 0 $'skopeo\tcopy'
 
-for failure_case in scan-timeout findings-error critical-findings
+for failure_case in \
+    scan-timeout findings-error incomplete-report critical-findings \
+    mixed-critical non-kernel-linux-finding missing-linux-version \
+    duplicate-linux-version mismatched-count mismatched-high missing-severity
 do
     export PROMOTION_TEST_CASE=${failure_case}
     : > "${PROMOTION_TEST_LOG}"

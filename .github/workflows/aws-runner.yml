@@ -52,16 +52,18 @@ jobs:
             id-token: write
 
         outputs:
-            build_environment: ${{ fromJSON(steps.runner.outputs.stack-outputs).BuildEnvironmentRepositoryUri }}
-            candidate_build_environment: ${{ fromJSON(steps.runner.outputs.stack-outputs).CandidateBuildEnvironmentRepositoryUri }}
-            candidate_unpruned_build_environment: ${{ fromJSON(steps.runner.outputs.stack-outputs).CandidateUnprunedBuildEnvironmentRepositoryUri }}
             instance_id: ${{ steps.runner.outputs.instance-id }}
             labels: ${{ steps.runner.outputs.labels }}
-            staging_build_environment: ${{ fromJSON(steps.runner.outputs.stack-outputs).StagingBuildEnvironmentRepositoryUri }}
-            staging_unpruned_build_environment: ${{ fromJSON(steps.runner.outputs.stack-outputs).StagingUnprunedBuildEnvironmentRepositoryUri }}
-            unpruned_build_environment: ${{ fromJSON(steps.runner.outputs.stack-outputs).UnprunedBuildEnvironmentRepositoryUri }}
+            repository_names: ${{ steps.repositories.outputs.names }}
 
         steps:
+          - name: Check out the requested revision
+            uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+            with:
+                repository: ${{ github.repository }}
+                ref: ${{ github.sha }}
+                persist-credentials: false
+
           - name: Validate the runner request
             env:
                 CACHE_TAG: ${{ inputs.cache_tag }}
@@ -113,6 +115,16 @@ jobs:
                 runner-size: ${{ inputs.runner_size }}
                 stack-name: ${{ vars.AWS_RUNNER_STACK_NAME }}
 
+          - name: Pass repository names to the runner
+            id: repositories
+            env:
+                AWS_REGION: ${{ vars.AWS_REGION }}
+                STACK_OUTPUTS: ${{ steps.runner.outputs.stack-outputs }}
+            run: |
+                set -euo pipefail
+                names=$(./ci/aws/strip-ecr-registry "${AWS_REGION}" <<< "${STACK_OUTPUTS}")
+                printf 'names=%s\n' "${names}" >> "${GITHUB_OUTPUT}"
+
     run:
         name: Run ${{ inputs.task }} ${{ inputs.target }}
         needs: provision
@@ -140,17 +152,35 @@ jobs:
           - name: Configure the build-environment cache
             if: inputs.task != 'boot'
             env:
-                BUILD_ENVIRONMENT: ${{ needs.provision.outputs.build_environment }}
                 CACHE_TAG: ${{ inputs.cache_tag }}
-                CANDIDATE_BUILD_ENVIRONMENT: ${{ needs.provision.outputs.candidate_build_environment }}
-                CANDIDATE_UNPRUNED_BUILD_ENVIRONMENT: ${{ needs.provision.outputs.candidate_unpruned_build_environment }}
-                STAGING_BUILD_ENVIRONMENT: ${{ needs.provision.outputs.staging_build_environment }}
-                STAGING_UNPRUNED_BUILD_ENVIRONMENT: ${{ needs.provision.outputs.staging_unpruned_build_environment }}
+                REPOSITORY_NAMES: ${{ needs.provision.outputs.repository_names }}
                 TASK: ${{ inputs.task }}
-                UNPRUNED_BUILD_ENVIRONMENT: ${{ needs.provision.outputs.unpruned_build_environment }}
             run: |
                 set -euo pipefail
-                registry=${BUILD_ENVIRONMENT%%/*}
+                account_id=$(aws sts get-caller-identity --query Account --output text)
+                if [[ ! ${account_id} =~ ^[0-9]{12}$ ]]
+                then
+                    printf 'Runner has no valid AWS account identity.\n' >&2
+                    exit 1
+                fi
+                registry="${account_id}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+                repository_list=$(jq --exit-status --raw-output '
+                    [ .BuildEnvironmentRepositoryUri,
+                      .UnprunedBuildEnvironmentRepositoryUri,
+                      .CandidateBuildEnvironmentRepositoryUri,
+                      .CandidateUnprunedBuildEnvironmentRepositoryUri,
+                      .StagingBuildEnvironmentRepositoryUri,
+                      .StagingUnprunedBuildEnvironmentRepositoryUri ] | @tsv
+                ' <<< "${REPOSITORY_NAMES}")
+                IFS=$'\t' read -r build_repository unpruned_repository \
+                    candidate_repository candidate_unpruned_repository \
+                    staging_repository staging_unpruned_repository <<< "${repository_list}"
+                BUILD_ENVIRONMENT="${registry}/${build_repository}"
+                UNPRUNED_BUILD_ENVIRONMENT="${registry}/${unpruned_repository}"
+                CANDIDATE_BUILD_ENVIRONMENT="${registry}/${candidate_repository}"
+                CANDIDATE_UNPRUNED_BUILD_ENVIRONMENT="${registry}/${candidate_unpruned_repository}"
+                STAGING_BUILD_ENVIRONMENT="${registry}/${staging_repository}"
+                STAGING_UNPRUNED_BUILD_ENVIRONMENT="${registry}/${staging_unpruned_repository}"
                 aws ecr get-login-password --region "${AWS_REGION}" \
                     | docker login --username AWS --password-stdin "${registry}"
 

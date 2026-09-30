@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $# -ne 1 || ! $1 =~ ^[a-z]{2}(-[a-z]+)+-[0-9]+$ ]]
+then
+    printf 'usage: %s <aws-region>\n' "$0" >&2
+    exit 2
+fi
+
+stack_outputs=$(jq --exit-status --compact-output '
+    if type == "object" then . else error("missing stack outputs") end
+')
+registry=$(jq --exit-status --raw-output '
+    .BuildEnvironmentRepositoryUri
+    | if type == "string" then split("/")[0]
+      else error("missing build-environment repository URI") end
+' <<< "${stack_outputs}")
+registry_pattern="^[0-9]{12}\\.dkr\\.ecr\\.$1\\.amazonaws\\.com$"
+if [[ ! ${registry} =~ ${registry_pattern} ]]
+then
+    printf 'The stack has an invalid ECR registry for %s.\n' "$1" >&2
+    exit 1
+fi
+
+jq --exit-status --compact-output --arg prefix "${registry}/" '
+    . as $outputs
+    | reduce [
+        "BuildEnvironmentRepositoryUri",
+        "UnprunedBuildEnvironmentRepositoryUri",
+        "CandidateBuildEnvironmentRepositoryUri",
+        "CandidateUnprunedBuildEnvironmentRepositoryUri",
+        "StagingBuildEnvironmentRepositoryUri",
+        "StagingUnprunedBuildEnvironmentRepositoryUri"
+      ][] as $key
+      ({};
+        ($outputs[$key]) as $uri
+        | if ($uri | type) != "string" then
+            error("missing repository URI: " + $key)
+          else . end
+        | ($uri | ltrimstr($prefix)) as $name
+        | if ($uri | startswith($prefix))
+             and ($name | test("^[a-z0-9]+([._/-][a-z0-9]+)*$")) then
+            . + {($key): $name}
+          else
+            error("invalid repository URI: " + $key)
+          end)
+' <<< "${stack_outputs}"
