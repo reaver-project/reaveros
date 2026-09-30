@@ -67,9 +67,36 @@ then
         printf '\t%s' "$@"
         printf '\n'
     } >> "${PROMOTION_TEST_LOG}"
+    auth_file=
+    arguments=("$@")
+    for ((index = 0; index < ${#arguments[@]}; ++index))
+    do
+        if [[ ${arguments[index]} == --authfile ]]
+        then
+            auth_file=${arguments[index + 1]:-}
+            break
+        fi
+    done
+    if [[ -z ${auth_file} || ! -f ${auth_file} \
+        || $(stat -c %a "${auth_file}") != 600 ]]
+    then
+        printf 'Skopeo auth file is missing or not private.\n' >&2
+        exit 1
+    fi
     if [[ $1 == login ]]
     then
+        if ! jq --exit-status '.auths == {}' "${auth_file}" > /dev/null
+        then
+            printf 'Skopeo auth file is not initialized as JSON.\n' >&2
+            exit 1
+        fi
         cat > /dev/null
+        printf '%s\n' '{"auths":{"registry.example":{"auth":"test"}}}' > "${auth_file}"
+    elif ! jq --exit-status '.auths["registry.example"].auth == "test"' \
+        "${auth_file}" > /dev/null
+    then
+        printf 'Skopeo did not reuse the logged-in credentials.\n' >&2
+        exit 1
     fi
     exit
 fi

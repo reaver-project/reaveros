@@ -98,12 +98,15 @@ verify_image_scan()
 verify_image_scan "${staging_image}"
 verify_image_scan "${staging_unpruned_image}"
 
-auth_file=$(mktemp)
+auth_directory=$(mktemp -d)
+auth_file="${auth_directory}/auth.json"
 cleanup()
 {
     rm -f "${auth_file}"
+    rmdir "${auth_directory}"
 }
 trap cleanup EXIT
+(umask 077; printf '{"auths":{}}\n' > "${auth_file}")
 
 registry=${staging_image%%/*}
 aws ecr get-login-password --region "${AWS_REGION}" \
