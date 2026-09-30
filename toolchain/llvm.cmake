@@ -130,7 +130,7 @@ ExternalProject_Add_Step(toolchain-llvm
     WORKING_DIRECTORY <SOURCE_DIR>
 )
 reaveros_add_ep_prune_target(toolchain-llvm)
-reaveros_add_ep_fetch_tag_target(toolchain-llvm)
+reaveros_add_ep_fetch_tag_target(toolchain-llvm ${REAVEROS_LLVM_REVISION})
 
 # install compiler-rt to the appropriate sysroots
 string(REGEX REPLACE "llvmorg-(([0-9]+)\.[0-9]+\.[0-9])+(-.*)?" "\\2" _llvm_version "${REAVEROS_LLVM_TAG}")

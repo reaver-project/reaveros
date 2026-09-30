@@ -37,6 +37,6 @@ ExternalProject_Add_Step(toolchain-cmake
     WORKING_DIRECTORY <SOURCE_DIR>
 )
 reaveros_add_ep_prune_target(toolchain-cmake)
-reaveros_add_ep_fetch_tag_target(toolchain-cmake)
+reaveros_add_ep_fetch_tag_target(toolchain-cmake ${REAVEROS_CMAKE_REVISION})
 
 reaveros_register_target(toolchain-cmake-install toolchain)

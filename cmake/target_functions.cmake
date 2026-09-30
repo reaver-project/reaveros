@@ -285,14 +285,13 @@ function(reaveros_add_ep_prune_target external_project)
     )
 endfunction()
 
-function(reaveros_add_ep_fetch_tag_target external_project)
+function(reaveros_add_ep_fetch_tag_target external_project revision)
     ExternalProject_Get_Property(${external_project} STAMP_DIR GIT_TAG)
 
     ExternalProject_Add_Step(${external_project}
         set-to-tag
-        COMMAND ${GIT_EXECUTABLE} fetch origin ${GIT_TAG} --depth=1
-        COMMAND ${GIT_EXECUTABLE} checkout ${GIT_TAG}
-        WORKING_DIRECTORY <SOURCE_DIR>
+        COMMAND bash ${REAVEROS_SOURCE_DIR}/toolchain/ensure-git-tag
+            <SOURCE_DIR> ${GIT_TAG} ${revision}
         DEPENDEES download
         DEPENDERS update patch configure build
         EXCLUDE_FROM_MAIN TRUE

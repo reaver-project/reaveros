@@ -43,6 +43,7 @@ fi
 "${repo_root}/docker/test-compiler-cache-options"
 "${repo_root}/ci/test-cache-launcher"
 "${repo_root}/ci/aws/test-strip-ecr-registry"
+"${self_dir}/test-toolchain-git-tag"
 cmake -DTEST_DIRECTORY="${test_directory}/patch-dependencies" \
     -P "${self_dir}/test-toolchain-patch-dependencies.cmake"
 
