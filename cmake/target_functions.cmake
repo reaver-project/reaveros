@@ -240,6 +240,16 @@ endfunction()
 function(reaveros_add_ep_prune_target external_project)
     ExternalProject_Get_Property(${external_project} STAMP_DIR)
 
+    cmake_parse_arguments(prune "REMOVE_DOWNLOADED_ARCHIVE" "SOURCE_STEP" "" ${ARGN})
+    if (prune_UNPARSED_ARGUMENTS)
+        message(FATAL_ERROR "Unexpected prune target options: ${prune_UNPARSED_ARGUMENTS}")
+    endif()
+    if (prune_SOURCE_STEP)
+        set(source_step "${prune_SOURCE_STEP}")
+    else()
+        set(source_step set-to-tag)
+    endif()
+
     get_property(has_git_tag TARGET ${external_project} PROPERTY _EP_GIT_TAG SET)
     if (has_git_tag)
         get_property(GIT_TAG TARGET ${external_project} PROPERTY _EP_GIT_TAG)
@@ -263,7 +273,7 @@ function(reaveros_add_ep_prune_target external_project)
         COMMAND rm -rf <SOURCE_DIR> <BINARY_DIR>
         COMMAND ${force_download_stamp_rm_cmd}
         COMMAND rm -rf ${STAMP_DIR}/${external_project}-gitclone-lastrun.txt
-        COMMAND touch ${STAMP_DIR}/${external_project}-set-to-tag
+        COMMAND touch ${STAMP_DIR}/${external_project}-${source_step}
         COMMAND touch ${STAMP_DIR}/${external_project}-skip-update
         COMMAND touch ${STAMP_DIR}/${external_project}-patch
         COMMAND touch ${STAMP_DIR}/${external_project}-apply-patches
@@ -271,6 +281,13 @@ function(reaveros_add_ep_prune_target external_project)
         COMMAND touch ${STAMP_DIR}/${external_project}-build
         COMMAND touch ${STAMP_DIR}/${external_project}-install
     )
+    if (prune_REMOVE_DOWNLOADED_ARCHIVE)
+        # Validation images must keep the download stamp even after dropping
+        # the archive, or ordinary targets will rebuild the toolchain.
+        list(APPEND _commands
+            COMMAND rm -f <DOWNLOADED_FILE>
+        )
+    endif()
 
     ExternalProject_Add_Step(${external_project}
         prune
@@ -285,14 +302,13 @@ function(reaveros_add_ep_prune_target external_project)
     )
 endfunction()
 
-function(reaveros_add_ep_fetch_tag_target external_project)
+function(reaveros_add_ep_fetch_tag_target external_project revision)
     ExternalProject_Get_Property(${external_project} STAMP_DIR GIT_TAG)
 
     ExternalProject_Add_Step(${external_project}
         set-to-tag
-        COMMAND ${GIT_EXECUTABLE} fetch origin ${GIT_TAG} --depth=1
-        COMMAND ${GIT_EXECUTABLE} checkout ${GIT_TAG}
-        WORKING_DIRECTORY <SOURCE_DIR>
+        COMMAND bash ${REAVEROS_SOURCE_DIR}/toolchain/ensure-git-tag
+            <SOURCE_DIR> ${GIT_TAG} ${revision}
         DEPENDEES download
         DEPENDERS update patch configure build
         EXCLUDE_FROM_MAIN TRUE

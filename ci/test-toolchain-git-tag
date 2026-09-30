@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+test_directory=$(mktemp -d)
+trap 'rm -rf "${test_directory}"' EXIT
+
+git init --bare --quiet "${test_directory}/remote"
+git init --quiet "${test_directory}/upstream"
+printf 'first\n' > "${test_directory}/upstream/source"
+git -C "${test_directory}/upstream" add source
+git -C "${test_directory}/upstream" \
+    -c commit.gpgsign=false -c core.hooksPath=/dev/null \
+    -c user.name=test -c user.email=test@example.invalid \
+    commit --quiet -m first
+first_revision=$(git -C "${test_directory}/upstream" rev-parse HEAD)
+git -C "${test_directory}/upstream" -c tag.gpgSign=false tag -a -m v1 v1
+git -C "${test_directory}/upstream" remote add origin "file://${test_directory}/remote"
+git -C "${test_directory}/upstream" push --quiet origin HEAD refs/tags/v1
+git clone --quiet --depth=1 --branch v1 \
+    "file://${test_directory}/remote" "${test_directory}/checkout"
+
+git -C "${test_directory}/checkout" remote set-url origin file:///nonexistent
+bash "${self_dir}/../toolchain/ensure-git-tag" \
+    "${test_directory}/checkout" v1 "${first_revision}" > "${test_directory}/first-log"
+if ! grep -q 'skipping fetch' "${test_directory}/first-log"
+then
+    printf 'An already-present tag did not skip the remote fetch.\n' >&2
+    exit 1
+fi
+
+printf 'second\n' > "${test_directory}/upstream/source"
+git -C "${test_directory}/upstream" add source
+git -C "${test_directory}/upstream" \
+    -c commit.gpgsign=false -c core.hooksPath=/dev/null \
+    -c user.name=test -c user.email=test@example.invalid \
+    commit --quiet -m second
+second_revision=$(git -C "${test_directory}/upstream" rev-parse HEAD)
+git -C "${test_directory}/upstream" -c tag.gpgSign=false tag -a -m v2 v2
+git -C "${test_directory}/upstream" push --quiet origin HEAD refs/tags/v2
+git -C "${test_directory}/checkout" remote set-url origin "file://${test_directory}/remote"
+bash "${self_dir}/../toolchain/ensure-git-tag" \
+    "${test_directory}/checkout" v2 "${second_revision}" > /dev/null
+if [[ $(git -C "${test_directory}/checkout" rev-parse HEAD) != "${second_revision}" ]]
+then
+    printf 'A newly requested tag was not checked out.\n' >&2
+    exit 1
+fi
+
+if bash "${self_dir}/../toolchain/ensure-git-tag" \
+    "${test_directory}/checkout" v2 "${first_revision}" > /dev/null 2>&1
+then
+    printf 'A tag that differs from its configured revision was accepted.\n' >&2
+    exit 1
+fi
+
+printf 'Toolchain Git tag tests passed.\n'

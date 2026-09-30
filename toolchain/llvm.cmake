@@ -78,13 +78,16 @@ set(patch_files
     ${CMAKE_CURRENT_LIST_DIR}/llvm/patches/000-reaveros-support-with-less-plt.patch
 )
 reaveros_patch_dependency(
-    patch_dependency toolchain-llvm ${REAVEROS_LLVM_REVISION} ${patch_files}
+    patch_dependency toolchain-llvm
+    ${REAVEROS_LLVM_REVISION}-${REAVEROS_LLVM_SOURCE_SHA256} ${patch_files}
 )
 
+string(REGEX REPLACE "^llvmorg-" "" _llvm_source_version "${REAVEROS_LLVM_TAG}")
 ExternalProject_Add(toolchain-llvm
-    GIT_REPOSITORY ${REAVEROS_LLVM_REPO}
-    GIT_TAG ${REAVEROS_LLVM_TAG}
-    GIT_SHALLOW TRUE
+    URL ${REAVEROS_LLVM_REPO}/releases/download/${REAVEROS_LLVM_TAG}/llvm-project-${_llvm_source_version}.src.tar.xz
+    URL_HASH SHA256=${REAVEROS_LLVM_SOURCE_SHA256}
+    DOWNLOAD_NO_EXTRACT TRUE
+    TLS_VERIFY TRUE
     UPDATE_DISCONNECTED 1
 
     STEP_TARGETS install
@@ -119,18 +122,28 @@ ExternalProject_Add(toolchain-llvm
         -DLLVM_INCLUDE_EXAMPLES=OFF
 )
 ExternalProject_Add_Step(toolchain-llvm
+    hydrate-source
+    COMMAND bash ${REAVEROS_SOURCE_DIR}/toolchain/hydrate-git-archive
+        <SOURCE_DIR> ${REAVEROS_LLVM_REPO} ${REAVEROS_LLVM_TAG}
+        ${REAVEROS_LLVM_REVISION} <DOWNLOADED_FILE>
+    DEPENDEES download update patch
+    DEPENDERS configure
+    DEPENDS ${patch_dependency}
+)
+ExternalProject_Add_Step(toolchain-llvm
     apply-patches
     COMMAND git reset --hard
     COMMAND git clean -fxd
     COMMAND git checkout --detach ${REAVEROS_LLVM_REVISION}
     COMMAND git apply ${patch_files}
-    DEPENDEES set-to-tag
+    DEPENDEES hydrate-source
     DEPENDERS configure
-    DEPENDS ${patch_dependency}
     WORKING_DIRECTORY <SOURCE_DIR>
 )
-reaveros_add_ep_prune_target(toolchain-llvm)
-reaveros_add_ep_fetch_tag_target(toolchain-llvm)
+reaveros_add_ep_prune_target(toolchain-llvm
+    SOURCE_STEP hydrate-source
+    REMOVE_DOWNLOADED_ARCHIVE
+)
 
 # install compiler-rt to the appropriate sysroots
 string(REGEX REPLACE "llvmorg-(([0-9]+)\.[0-9]+\.[0-9])+(-.*)?" "\\2" _llvm_version "${REAVEROS_LLVM_TAG}")

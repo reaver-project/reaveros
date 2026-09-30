@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $# -ne 2 ]]
+then
+    printf 'usage: %s <pruned image> <unpruned image>\n' "$0" >&2
+    exit 2
+fi
+
+docker push "$1" &
+pruned_push=$!
+docker push "$2" &
+unpruned_push=$!
+
+pruned_status=0
+unpruned_status=0
+wait "${pruned_push}" || pruned_status=$?
+wait "${unpruned_push}" || unpruned_status=$?
+
+if [[ ${pruned_status} -ne 0 || ${unpruned_status} -ne 0 ]]
+then
+    printf 'Image pushes failed (pruned: %s, unpruned: %s).\n' \
+        "${pruned_status}" "${unpruned_status}" >&2
+    exit 1
+fi

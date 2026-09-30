@@ -20,7 +20,7 @@ ExternalProject_Add(toolchain-dosfstools
     INSTALL_COMMAND $(MAKE) install
 )
 reaveros_add_ep_prune_target(toolchain-dosfstools)
-reaveros_add_ep_fetch_tag_target(toolchain-dosfstools)
+reaveros_add_ep_fetch_tag_target(toolchain-dosfstools ${REAVEROS_DOSFSTOOLS_REVISION})
 
 reaveros_register_target(toolchain-dosfstools-install toolchain)
 
