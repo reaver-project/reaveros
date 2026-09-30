@@ -235,8 +235,9 @@ jobs:
                 ./docker/update-images "${arguments[@]}"
                 if [[ $(awk -F= '/^ready=/{ print $2 }' "${GITHUB_OUTPUT}" | tail -n1) == true ]]
                 then
-                    docker push "$(./docker/image-ref pruned)"
-                    docker push "$(./docker/image-ref unpruned)"
+                    ./ci/aws/push-images \
+                        "$(./docker/image-ref pruned)" \
+                        "$(./docker/image-ref unpruned)"
                 fi
 
           - name: Report compiler-cache use

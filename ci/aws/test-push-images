@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $(basename -- "$0") == docker ]]
+then
+    if [[ $# -ne 2 || $1 != push ]]
+    then
+        exit 2
+    fi
+    image=$2
+    touch "${PUSH_TEST_DIRECTORY}/started-${image}"
+    for ((attempt = 0; attempt < 50; ++attempt))
+    do
+        if [[ -f ${PUSH_TEST_DIRECTORY}/started-pruned \
+            && -f ${PUSH_TEST_DIRECTORY}/started-unpruned ]]
+        then
+            break
+        fi
+        sleep 0.1
+    done
+    if [[ ! -f ${PUSH_TEST_DIRECTORY}/started-pruned \
+        || ! -f ${PUSH_TEST_DIRECTORY}/started-unpruned ]]
+    then
+        printf 'Image pushes did not overlap.\n' >&2
+        exit 1
+    fi
+    touch "${PUSH_TEST_DIRECTORY}/finished-${image}"
+    [[ ${PUSH_TEST_FAIL:-} != "${image}" ]]
+    exit
+fi
+
+self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+test_directory=$(mktemp -d)
+trap 'rm -r -- "${test_directory}"' EXIT
+mkdir "${test_directory}/bin"
+ln -s "${self_dir}/test-push-images" "${test_directory}/bin/docker"
+export PATH="${test_directory}/bin:${PATH}"
+export PUSH_TEST_DIRECTORY=${test_directory}
+
+"${self_dir}/push-images" pruned unpruned
+if [[ ! -f ${test_directory}/finished-pruned \
+    || ! -f ${test_directory}/finished-unpruned ]]
+then
+    printf 'Both image pushes did not complete.\n' >&2
+    exit 1
+fi
+
+rm "${test_directory}/started-pruned" "${test_directory}/started-unpruned" \
+    "${test_directory}/finished-pruned" "${test_directory}/finished-unpruned"
+if PUSH_TEST_FAIL=unpruned "${self_dir}/push-images" pruned unpruned \
+    > /dev/null 2>&1
+then
+    printf 'A failed image push did not fail the pair.\n' >&2
+    exit 1
+fi
+if [[ ! -f ${test_directory}/finished-pruned \
+    || ! -f ${test_directory}/finished-unpruned ]]
+then
+    printf 'A failed image push prevented the other push from completing.\n' >&2
+    exit 1
+fi
+
+rm "${test_directory}/started-pruned" "${test_directory}/started-unpruned" \
+    "${test_directory}/finished-pruned" "${test_directory}/finished-unpruned"
+if PUSH_TEST_FAIL=pruned "${self_dir}/push-images" pruned unpruned \
+    > /dev/null 2>&1
+then
+    printf 'A failed pruned-image push did not fail the pair.\n' >&2
+    exit 1
+fi
+if [[ ! -f ${test_directory}/finished-pruned \
+    || ! -f ${test_directory}/finished-unpruned ]]
+then
+    printf 'A failed pruned-image push prevented the other push from completing.\n' >&2
+    exit 1
+fi
+
+printf 'Parallel image-push tests passed.\n'
