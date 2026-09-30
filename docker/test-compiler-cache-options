@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=docker/compiler-cache.sh
+source "${self_dir}/compiler-cache.sh"
+
+unset REAVER_PROJECT_SCCACHE_HOST_DIR REAVER_PROJECT_SCCACHE_CONTAINER_DIR
+reaver_project_compiler_cache_options
+if [[ ${#reaver_project_compiler_cache_args[@]} -ne 0 ]]
+then
+    printf 'An unconfigured build mounted a compiler cache.\n' >&2
+    exit 1
+fi
+
+test_directory=$(mktemp -d)
+cleanup()
+{
+    rm -rf -- "${test_directory}"
+}
+trap cleanup EXIT
+install -m 0755 /usr/bin/true "${test_directory}/sccache"
+install -m 0644 "${self_dir}/../LICENSE" "${test_directory}/LICENSE"
+python3 -c '
+import socket
+import sys
+
+server = socket.socket(socket.AF_UNIX)
+server.bind(sys.argv[1])
+server.close()
+' "${test_directory}/sccache.sock"
+
+export REAVER_PROJECT_SCCACHE_HOST_DIR=${test_directory}
+export REAVER_PROJECT_SCCACHE_CONTAINER_DIR=/run/reaver-project/compiler-cache
+reaver_project_compiler_cache_options
+expected=(
+    --volume "${test_directory}:/run/reaver-project/compiler-cache:ro"
+    --env REAVER_PROJECT_SCCACHE_CONTAINER_DIR=/run/reaver-project/compiler-cache
+    --env SCCACHE_SERVER_UDS=/run/reaver-project/compiler-cache/sccache.sock
+    --env SCCACHE_CLIENT_SIDE=1
+)
+if [[ ${#reaver_project_compiler_cache_args[@]} -ne ${#expected[@]} ]]
+then
+    printf 'The compiler-cache mount has the wrong number of arguments.\n' >&2
+    exit 1
+fi
+for ((index = 0; index < ${#expected[@]}; ++index))
+do
+    if [[ ${reaver_project_compiler_cache_args[index]} != "${expected[index]}" ]]
+    then
+        printf 'The compiler-cache mount differs at argument %s.\n' "${index}" >&2
+        exit 1
+    fi
+done
+
+if REAVER_PROJECT_SCCACHE_CONTAINER_DIR=/invalid \
+    reaver_project_compiler_cache_options > /dev/null 2>&1
+then
+    printf 'Accepted an unexpected container cache mount point.\n' >&2
+    exit 1
+fi
+printf 'Docker compiler-cache mount tests passed.\n'

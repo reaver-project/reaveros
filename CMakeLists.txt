@@ -15,6 +15,8 @@ set(REAVEROS_CTEST ${REAVEROS_BINARY_DIR}/install/toolchain/cmake/bin/ctest)
 set(REAVEROS_THORN ${REAVEROS_BINARY_DIR}/install/toolchain/thorn/bin/thorn)
 
 if (REAVEROS_USE_CACHE)
+    # A reused build directory may have cached a different launcher.
+    unset(_cache_program CACHE)
     find_program(_cache_program ${REAVEROS_CACHE_PROGRAM})
     if (_cache_program)
         set(CMAKE_C_COMPILER_LAUNCHER ${_cache_program})

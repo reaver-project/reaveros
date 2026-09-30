@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+repo_root=$(git -C "${self_dir}" rev-parse --show-toplevel)
+test_directory=$(mktemp -d)
+cleanup()
+{
+    rm -rf -- "${test_directory}"
+}
+trap cleanup EXIT
+install -d "${test_directory}/bin"
+install -m 0755 /usr/bin/true "${test_directory}/bin/ccache"
+install -m 0755 /usr/bin/true "${test_directory}/bin/sccache"
+export PATH="${test_directory}/bin:${PATH}"
+
+for cache_program in ccache sccache; do
+    cmake -S "${repo_root}" -B "${test_directory}/build" \
+        -DREAVEROS_CACHE_PROGRAM="${cache_program}" > /dev/null
+    if ! grep --fixed-strings --line-regexp \
+        "_cache_program:FILEPATH=${test_directory}/bin/${cache_program}" \
+        "${test_directory}/build/CMakeCache.txt" > /dev/null
+    then
+        printf 'CMake retained the wrong compiler cache after selecting %s.\n' \
+            "${cache_program}" >&2
+        exit 1
+    fi
+done
+
+printf 'CMake compiler-cache launcher tests passed.\n'

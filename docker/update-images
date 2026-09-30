@@ -4,6 +4,8 @@ set -euo pipefail
 
 self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(git -C "${self_dir}" rev-parse --show-toplevel)
+# shellcheck source=docker/compiler-cache.sh
+source "${self_dir}/compiler-cache.sh"
 defer_llvm=false
 refresh=false
 
@@ -141,9 +143,11 @@ if ${defer_llvm}
 then
     update_arguments+=(--defer-llvm)
 fi
+reaver_project_compiler_cache_options
 docker run \
     --name "${container}" \
     --volume "${repo_root}:/reaveros:ro" \
+    "${reaver_project_compiler_cache_args[@]}" \
     "${seed_image}" \
     /reaveros/docker/build-toolchain "${update_arguments[@]}" \
     | tee "${update_log}"
