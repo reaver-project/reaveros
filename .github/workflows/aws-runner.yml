@@ -18,7 +18,7 @@ on:
                 required: false
                 type: boolean
             runner_size:
-                description: Fixed runner class, either medium or large
+                description: Runner class used to distinguish preparation jobs
                 required: true
                 type: string
             target:
@@ -42,94 +42,14 @@ permissions:
     contents: read
 
 jobs:
-    provision:
-        name: Provision ${{ inputs.runner_size }} runner
-        runs-on: ubuntu-latest
-        timeout-minutes: 25
-
-        permissions:
-            contents: read
-            id-token: write
-
-        outputs:
-            instance_id: ${{ steps.runner.outputs.instance-id }}
-            labels: ${{ steps.runner.outputs.labels }}
-            repository_names: ${{ steps.repositories.outputs.names }}
-
-        steps:
-          - name: Check out the requested revision
-            uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-            with:
-                repository: ${{ github.repository }}
-                ref: ${{ github.sha }}
-                persist-credentials: false
-
-          - name: Validate the runner request
-            env:
-                CACHE_TAG: ${{ inputs.cache_tag }}
-                DEFER_LLVM: ${{ inputs.defer_llvm }}
-                RUNNER_SIZE: ${{ inputs.runner_size }}
-                TARGET: ${{ inputs.target }}
-                TASK: ${{ inputs.task }}
-            run: |
-                set -euo pipefail
-                if [[ ! ${CACHE_TAG} =~ ^run-[0-9]+-[0-9]+$ ]]
-                then
-                    printf 'Invalid cache tag: %s\n' "${CACHE_TAG}" >&2
-                    exit 2
-                fi
-                if [[ ! ${RUNNER_SIZE} =~ ^(medium|large)$ ]]
-                then
-                    printf 'Invalid runner size: %s\n' "${RUNNER_SIZE}" >&2
-                    exit 2
-                fi
-                if [[ ! ${TARGET} =~ ^[a-z0-9-]*$ ]]
-                then
-                    printf 'Invalid matrix target: %s\n' "${TARGET}" >&2
-                    exit 2
-                fi
-
-                case ${TASK} in
-                    prepare)
-                        [[ -z ${TARGET} ]]
-                        ;;
-                    build-dependencies|unit-tests|image|boot)
-                        [[ -n ${TARGET} && ${RUNNER_SIZE} == medium && ${DEFER_LLVM} == false ]]
-                        ;;
-                    *)
-                        printf 'Invalid runner task: %s\n' "${TASK}" >&2
-                        exit 2
-                        ;;
-                esac
-
-          - name: Launch the JIT runner
-            id: runner
-            uses: reaver-project/infrastructure/actions/ephemeral-runner@d9a8f0e6a69deabe84424ea0877401a0a4f3d4de
-            with:
-                aws-region: ${{ vars.AWS_REGION }}
-                control-function-output: ${{ github.ref == 'refs/heads/main' && 'TrustedRunnerControlFunctionName' || 'RunnerControlFunctionName' }}
-                expected-contract-version: '5'
-                operation: launch
-                role-arn: ${{ github.ref == 'refs/heads/main' && vars.AWS_TRUSTED_RUNNER_ROLE_ARN || vars.AWS_RUNNER_ROLE_ARN }}
-                runner-key: ${{ inputs.target == '' && inputs.task || format('{0}-{1}', inputs.task, inputs.target) }}
-                runner-profile: ${{ inputs.task == 'prepare' && 'builder' || 'validation' }}
-                runner-size: ${{ inputs.runner_size }}
-                stack-name: ${{ vars.AWS_RUNNER_STACK_NAME }}
-
-          - name: Pass repository names to the runner
-            id: repositories
-            env:
-                AWS_REGION: ${{ vars.AWS_REGION }}
-                STACK_OUTPUTS: ${{ steps.runner.outputs.stack-outputs }}
-            run: |
-                set -euo pipefail
-                names=$(./ci/aws/strip-ecr-registry "${AWS_REGION}" <<< "${STACK_OUTPUTS}")
-                printf 'names=%s\n' "${names}" >> "${GITHUB_OUTPUT}"
-
     run:
-        name: Run ${{ inputs.task }} ${{ inputs.target }}
-        needs: provision
-        runs-on: ${{ fromJSON(needs.provision.outputs.labels) }}
+        name: Run AWS ${{ inputs.task }} ${{ inputs.target }}
+        runs-on:
+            group: reaveros
+            labels:
+              - self-hosted
+              - reaveros-aws
+              - reaveros-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.task == 'prepare' && format('prepare-{0}', inputs.runner_size) || format('{0}-{1}', inputs.task, inputs.target) }}
         timeout-minutes: 240
 
         permissions:
@@ -141,6 +61,7 @@ jobs:
 
         env:
             AWS_REGION: ${{ vars.AWS_REGION }}
+            AWS_RUNNER_STACK_NAME: ${{ vars.AWS_RUNNER_STACK_NAME }}
 
         steps:
           - name: Check out the requested revision
@@ -164,10 +85,17 @@ jobs:
             if: inputs.task != 'boot'
             env:
                 CACHE_TAG: ${{ inputs.cache_tag }}
-                REPOSITORY_NAMES: ${{ needs.provision.outputs.repository_names }}
                 TASK: ${{ inputs.task }}
             run: |
                 set -euo pipefail
+                stack_outputs=$(aws cloudformation describe-stacks \
+                    --region "${AWS_REGION}" \
+                    --stack-name "${AWS_RUNNER_STACK_NAME}" \
+                    --query 'Stacks[0].Outputs' \
+                    --output json \
+                    | jq --exit-status 'map({key: .OutputKey, value: .OutputValue}) | from_entries')
+                repository_names=$(./ci/aws/strip-ecr-registry "${AWS_REGION}" \
+                    <<< "${stack_outputs}")
                 account_id=$(aws sts get-caller-identity --query Account --output text)
                 if [[ ! ${account_id} =~ ^[0-9]{12}$ ]]
                 then
@@ -182,7 +110,7 @@ jobs:
                       .CandidateUnprunedBuildEnvironmentRepositoryUri,
                       .StagingBuildEnvironmentRepositoryUri,
                       .StagingUnprunedBuildEnvironmentRepositoryUri ] | @tsv
-                ' <<< "${REPOSITORY_NAMES}")
+                ' <<< "${repository_names}")
                 IFS=$'\t' read -r build_repository unpruned_repository \
                     candidate_repository candidate_unpruned_repository \
                     staging_repository staging_unpruned_repository <<< "${repository_list}"
@@ -290,27 +218,3 @@ jobs:
                 path: artifacts/${{ inputs.target }}.serial.log
                 if-no-files-found: warn
                 retention-days: 7
-
-    cleanup:
-        name: Terminate ephemeral runner
-        if: always() && needs.provision.outputs.instance_id != ''
-        needs:
-          - provision
-          - run
-        runs-on: ubuntu-latest
-        timeout-minutes: 10
-
-        permissions:
-            contents: read
-            id-token: write
-
-        steps:
-          - name: Terminate the runner
-            uses: reaver-project/infrastructure/actions/ephemeral-runner@d9a8f0e6a69deabe84424ea0877401a0a4f3d4de
-            with:
-                aws-region: ${{ vars.AWS_REGION }}
-                control-function-output: ${{ github.ref == 'refs/heads/main' && 'TrustedRunnerControlFunctionName' || 'RunnerControlFunctionName' }}
-                instance-id: ${{ needs.provision.outputs.instance_id }}
-                operation: terminate
-                role-arn: ${{ github.ref == 'refs/heads/main' && vars.AWS_TRUSTED_RUNNER_ROLE_ARN || vars.AWS_RUNNER_ROLE_ARN }}
-                stack-name: ${{ vars.AWS_RUNNER_STACK_NAME }}
