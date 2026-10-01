@@ -104,7 +104,7 @@ jobs:
 
           - name: Launch the JIT runner
             id: runner
-            uses: reaver-project/infrastructure/actions/ephemeral-runner@820f7d10f49506c29b421f2f51134810ac78e2b7
+            uses: reaver-project/infrastructure/actions/ephemeral-runner@d9a8f0e6a69deabe84424ea0877401a0a4f3d4de
             with:
                 aws-region: ${{ vars.AWS_REGION }}
                 control-function-output: ${{ github.ref == 'refs/heads/main' && 'TrustedRunnerControlFunctionName' || 'RunnerControlFunctionName' }}
@@ -152,7 +152,7 @@ jobs:
 
           - name: Configure the host compiler cache
             if: inputs.task == 'prepare'
-            uses: reaver-project/infrastructure/actions/compiler-cache@820f7d10f49506c29b421f2f51134810ac78e2b7
+            uses: reaver-project/infrastructure/actions/compiler-cache@d9a8f0e6a69deabe84424ea0877401a0a4f3d4de
             env:
                 SCCACHE_SKIP_CACHE_CHECK: 'true'
             with:
@@ -306,7 +306,7 @@ jobs:
 
         steps:
           - name: Terminate the runner
-            uses: reaver-project/infrastructure/actions/ephemeral-runner@820f7d10f49506c29b421f2f51134810ac78e2b7
+            uses: reaver-project/infrastructure/actions/ephemeral-runner@d9a8f0e6a69deabe84424ea0877401a0a4f3d4de
             with:
                 aws-region: ${{ vars.AWS_REGION }}
                 control-function-output: ${{ github.ref == 'refs/heads/main' && 'TrustedRunnerControlFunctionName' || 'RunnerControlFunctionName' }}

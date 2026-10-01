@@ -77,7 +77,7 @@ jobs:
 
           - name: Read the AWS infrastructure contract
             id: stack
-            uses: reaver-project/infrastructure/actions/aws-stack-contract@820f7d10f49506c29b421f2f51134810ac78e2b7
+            uses: reaver-project/infrastructure/actions/aws-stack-contract@d9a8f0e6a69deabe84424ea0877401a0a4f3d4de
             with:
                 aws-region: ${{ vars.AWS_REGION }}
                 expected-contract-version: '5'
