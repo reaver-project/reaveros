@@ -35,6 +35,7 @@ cleanup()
     rm -f "${auth_file}"
 }
 trap cleanup EXIT
+(umask 077; printf '{"auths":{}}\n' > "${auth_file}")
 
 registry=${source_image%%/*}
 aws ecr get-login-password --region "${AWS_REGION}" \

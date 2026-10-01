@@ -27,6 +27,24 @@ then
     } >> "${PUBLISH_TEST_LOG}"
     if [[ $1 == login ]]
     then
+        auth_file=
+        while [[ $# -gt 0 ]]
+        do
+            if [[ $1 == --authfile ]]
+            then
+                auth_file=${2:-}
+                break
+            fi
+            shift
+        done
+        if [[ -z ${auth_file} ]] ||
+            ! jq --exit-status '.auths | type == "object"' \
+                "${auth_file}" > /dev/null 2>&1 ||
+            [[ $(stat -c %a "${auth_file}") != 600 ]]
+        then
+            printf 'Skopeo login needs an initialized private auth file.\n' >&2
+            exit 1
+        fi
         cat > /dev/null
     elif [[ $1 == inspect ]]
     then
