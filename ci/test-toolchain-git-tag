@@ -15,7 +15,9 @@ git -C "${test_directory}/upstream" \
     -c user.name=test -c user.email=test@example.invalid \
     commit --quiet -m first
 first_revision=$(git -C "${test_directory}/upstream" rev-parse HEAD)
-git -C "${test_directory}/upstream" -c tag.gpgSign=false tag -a -m v1 v1
+git -C "${test_directory}/upstream" \
+    -c tag.gpgSign=false -c user.name=test -c user.email=test@example.invalid \
+    tag -a -m v1 v1
 git -C "${test_directory}/upstream" remote add origin "file://${test_directory}/remote"
 git -C "${test_directory}/upstream" push --quiet origin HEAD refs/tags/v1
 git clone --quiet --depth=1 --branch v1 \
@@ -37,7 +39,9 @@ git -C "${test_directory}/upstream" \
     -c user.name=test -c user.email=test@example.invalid \
     commit --quiet -m second
 second_revision=$(git -C "${test_directory}/upstream" rev-parse HEAD)
-git -C "${test_directory}/upstream" -c tag.gpgSign=false tag -a -m v2 v2
+git -C "${test_directory}/upstream" \
+    -c tag.gpgSign=false -c user.name=test -c user.email=test@example.invalid \
+    tag -a -m v2 v2
 git -C "${test_directory}/upstream" push --quiet origin HEAD refs/tags/v2
 git -C "${test_directory}/checkout" remote set-url origin "file://${test_directory}/remote"
 bash "${self_dir}/../toolchain/ensure-git-tag" \
