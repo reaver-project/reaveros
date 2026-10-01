@@ -121,7 +121,7 @@ jobs:
             run: trusted/ci/aws/select-infrastructure-contract trusted
 
           - name: Validate the requested infrastructure consumer
-            uses: reaver-project/infrastructure/actions/validate-infrastructure-consumer@d9a8f0e6a69deabe84424ea0877401a0a4f3d4de
+            uses: reaver-project/infrastructure/actions/validate-infrastructure-consumer@3a9b9a66a7242709589765475f93e9e33ddb07cc
             with:
                 source-directory: ${{ github.workspace }}/candidate
                 revision-file: ci/aws/infrastructure-revision
