@@ -186,7 +186,6 @@ jobs:
           - toolchain-update-state
         permissions:
             contents: read
-            id-token: write
         uses: ./.github/workflows/aws-runner.yml
         with:
             cache_tag: run-${{ github.run_id }}-${{ github.run_attempt }}
@@ -203,7 +202,6 @@ jobs:
           - build-environment
         permissions:
             contents: read
-            id-token: write
         uses: ./.github/workflows/aws-runner.yml
         with:
             cache_tag: run-${{ github.run_id }}-${{ github.run_attempt }}
@@ -264,7 +262,6 @@ jobs:
           - build-environment-ready
         permissions:
             contents: read
-            id-token: write
         strategy:
             fail-fast: false
             matrix:
@@ -285,7 +282,6 @@ jobs:
           - build-environment-ready
         permissions:
             contents: read
-            id-token: write
         strategy:
             fail-fast: false
             matrix:
@@ -306,7 +302,6 @@ jobs:
           - build-environment-ready
         permissions:
             contents: read
-            id-token: write
         strategy:
             fail-fast: false
             matrix:
@@ -328,7 +323,6 @@ jobs:
           - image-build
         permissions:
             contents: read
-            id-token: write
         strategy:
             fail-fast: false
             matrix:
