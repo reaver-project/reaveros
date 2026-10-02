@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+# These runtimes are not used by the build-environment selector. Keep Docker,
+# Python, Node.js and the hosted tool cache for the workflow actions that follow.
+unused_runtimes=(
+    /usr/local/lib/android/sdk
+    /usr/share/dotnet
+    /usr/local/.ghcup
+    /opt/ghc
+)
+
+if [[ $# -eq 1 && $1 == --list ]]
+then
+    printf '%s\n' "${unused_runtimes[@]}"
+    exit 0
+fi
+if [[ $# -ne 0 || ${RUNNER_ENVIRONMENT:-} != github-hosted || ${RUNNER_OS:-} != Linux ]]
+then
+    printf 'This cleanup runs only on a GitHub-hosted Linux runner.\n' >&2
+    exit 2
+fi
+
+df -h / | tail -n 1
+for runtime in "${unused_runtimes[@]}"
+do
+    if [[ ! -e ${runtime} && ! -L ${runtime} ]]
+    then
+        continue
+    fi
+    printf 'Removing unused runtime %s\n' "${runtime}"
+    sudo du -sh -- "${runtime}"
+    sudo rm -rf --one-file-system -- "${runtime}"
+done
+df -h / | tail -n 1
