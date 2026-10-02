@@ -1,5 +1,6 @@
 *.d
 *.o
+__pycache__/
 *.color_coded
 *.ycm_*
 tools

@@ -1,0 +1,50 @@
+tags:
+  architecture: {required: true}
+  loader: {}
+  layout: {}
+  firmware: {}
+  machine: {}
+  language: {}
+
+artifacts:
+  image: {file: image.img}
+  serial: {file: serial.log, on_failure: true}
+
+jobs:
+  build-dependencies:
+    name: Check build-system dependencies
+    invoke: check-build-dependencies
+    axes: [architecture]
+    phase: standalone
+    runner_class: validation-medium
+    build_environment: true
+  unit-tests:
+    name: Unit tests
+    invoke: run-unit-tests
+    axes: [architecture]
+    phase: standalone
+    runner_class: validation-medium
+    build_environment: true
+  image:
+    name: Build image
+    invoke: build-image
+    axes: [loader, layout, architecture]
+    phase: producer
+    runner_class: validation-medium
+    build_environment: true
+    produces: image
+  smoke:
+    name: Boot smoke test
+    invoke: boot-smoke
+    axes: [loader, layout, architecture, firmware, machine]
+    phase: consumer
+    runner_class: validation-medium
+    needs: image
+    consumes: image
+    produces: serial
+
+workflows:
+  ci:
+    # Each line is a submatrix: jobs selects job types, and tag lists are axes.
+    - {jobs: [build-dependencies, unit-tests], architecture: [amd64]}
+    - {jobs: [image, smoke], architecture: [amd64], loader: [uefi], layout: [efipart], firmware: [ovmf], machine: [q35]}
