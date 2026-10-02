@@ -1,0 +1,198 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+case $(basename -- "$0") in
+    aws)
+        if [[ $1 == cloudformation && $2 == describe-stacks ]]
+        then
+            jq '[to_entries[] | {OutputKey: .key, OutputValue: .value}]' \
+                <<< "${TEST_STACK_OUTPUTS}"
+            exit 0
+        fi
+        if [[ $1 == ecr && $2 == get-login-password ]]
+        then
+            printf 'test-password\n'
+            exit 0
+        fi
+        if [[ $1 != ecr || $2 != batch-get-image ]]
+        then
+            printf 'Unexpected AWS selector call: %s\n' "$*" >&2
+            exit 1
+        fi
+        if [[ ${TEST_SELECTOR_CASE} == error ]]
+        then
+            printf 'Simulated ECR failure.\n' >&2
+            exit 1
+        fi
+        while [[ $# -gt 0 ]]
+        do
+            if [[ $1 == --repository-name ]]
+            then
+                image_repository=$2
+                break
+            fi
+            shift
+        done
+        if [[ ${TEST_SELECTOR_CASE} == hit && ${image_repository} == production-* ]] \
+            || grep --fixed-strings --quiet "docker://${TEST_REGISTRY}/${image_repository}:run-123-1" \
+                "${TEST_STAGED_FILE}"
+        then
+            digest_suffix=0
+            if [[ ${TEST_STAGED_CONFLICT:-false} == true \
+                && ${image_repository} == staging-* ]]
+            then
+                digest_suffix=1
+            fi
+            printf '{"images":[{"imageId":{"imageDigest":"sha256:%064d"}}],"failures":[]}\n' \
+                "${digest_suffix}"
+        else
+            printf '{"images":[],"failures":[{"failureCode":"ImageNotFound"}]}\n'
+        fi
+        exit 0
+        ;;
+    skopeo)
+        printf '%s\n' "$*" >> "${TEST_SKOPEO_LOG}"
+        if [[ $1 == login ]]
+        then
+            cat >/dev/null
+        else
+            printf '%s\n' "${@: -1}" >> "${TEST_STAGED_FILE}"
+        fi
+        exit 0
+        ;;
+    docker)
+        printf '%s\n' "$*" >> "${TEST_DOCKER_LOG}"
+        case $1 in
+            login) cat >/dev/null ;;
+            pull) [[ ${TEST_SEED_AVAILABLE:-true} == true \
+                && $2 == "${TEST_REGISTRY}/production-unpruned:"* ]] ;;
+            run) printf 'reaveros_llvm_rebuild=%s\n' "${TEST_LLVM_REBUILD}" ;;
+            rm) ;;
+            *) exit 1 ;;
+        esac
+        exit
+        ;;
+esac
+
+self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+test_directory=$(mktemp -d)
+trap 'rm -r -- "${test_directory}"' EXIT
+mkdir "${test_directory}/bin"
+for command in aws skopeo docker
+do
+    ln -s "${self_dir}/test-select-build-environment" \
+        "${test_directory}/bin/${command}"
+done
+export PATH="${test_directory}/bin:${PATH}"
+# Cleanup has its own test; mock selection must not remove the host's runtimes.
+unset RUNNER_ENVIRONMENT
+export AWS_REGION=us-west-2
+export AWS_RUNNER_STACK_NAME=reaveros-test-stack
+export CACHE_TAG=run-123-1
+export REFRESH_CACHE=false
+export GITHUB_OUTPUT="${test_directory}/github-output"
+export TEST_REGISTRY=123456789012.dkr.ecr.us-west-2.amazonaws.com
+export TEST_STAGED_FILE="${test_directory}/staged"
+export TEST_SKOPEO_LOG="${test_directory}/skopeo"
+export TEST_DOCKER_LOG="${test_directory}/docker"
+TEST_STACK_OUTPUTS=$(jq --null-input --arg registry "${TEST_REGISTRY}" '{
+    BuildEnvironmentRepositoryUri: ($registry + "/production-pruned"),
+    UnprunedBuildEnvironmentRepositoryUri: ($registry + "/production-unpruned"),
+    CandidateBuildEnvironmentRepositoryUri: ($registry + "/candidate-pruned"),
+    CandidateUnprunedBuildEnvironmentRepositoryUri: ($registry + "/candidate-unpruned"),
+    StagingBuildEnvironmentRepositoryUri: ($registry + "/staging-pruned"),
+    StagingUnprunedBuildEnvironmentRepositoryUri: ($registry + "/staging-unpruned")
+}')
+export TEST_STACK_OUTPUTS
+
+: > "${TEST_STAGED_FILE}"
+: > "${TEST_SKOPEO_LOG}"
+: > "${TEST_DOCKER_LOG}"
+: > "${GITHUB_OUTPUT}"
+export TEST_SELECTOR_CASE=hit
+"${self_dir}/select-build-environment"
+if ! grep --fixed-strings --line-regexp --quiet 'mode=reuse' "${GITHUB_OUTPUT}" \
+    || [[ $(grep --fixed-strings --count 'copy --all' "${TEST_SKOPEO_LOG}") -ne 2 ]] \
+    || [[ -s ${TEST_DOCKER_LOG} ]]
+then
+    printf 'An exact cached pair did not bypass the AWS builder.\n' >&2
+    exit 1
+fi
+
+for rebuild in false true
+do
+    : > "${TEST_STAGED_FILE}"
+    : > "${TEST_SKOPEO_LOG}"
+    : > "${TEST_DOCKER_LOG}"
+    : > "${GITHUB_OUTPUT}"
+    export TEST_SELECTOR_CASE=miss
+    export TEST_LLVM_REBUILD=${rebuild}
+    "${self_dir}/select-build-environment"
+    expected_size=medium
+    if [[ ${rebuild} == true ]]
+    then
+        expected_size=large
+    fi
+    if ! grep --fixed-strings --line-regexp --quiet 'mode=build' "${GITHUB_OUTPUT}" \
+        || ! grep --fixed-strings --line-regexp --quiet \
+            "runner_size=${expected_size}" "${GITHUB_OUTPUT}" \
+        || [[ -s ${TEST_SKOPEO_LOG} ]]
+    then
+        printf 'A cache miss did not select the %s builder.\n' "${expected_size}" >&2
+        exit 1
+    fi
+done
+
+: > "${TEST_STAGED_FILE}"
+: > "${TEST_SKOPEO_LOG}"
+: > "${TEST_DOCKER_LOG}"
+: > "${GITHUB_OUTPUT}"
+export TEST_SELECTOR_CASE=hit
+export TEST_LLVM_REBUILD=false
+export REFRESH_CACHE=true
+"${self_dir}/select-build-environment"
+if ! grep --fixed-strings --line-regexp --quiet 'mode=build' "${GITHUB_OUTPUT}" \
+    || [[ -s ${TEST_SKOPEO_LOG} ]]
+then
+    printf 'Explicit cache refresh incorrectly reused an old image.\n' >&2
+    exit 1
+fi
+export REFRESH_CACHE=false
+
+: > "${TEST_STAGED_FILE}"
+: > "${TEST_DOCKER_LOG}"
+: > "${GITHUB_OUTPUT}"
+export TEST_SELECTOR_CASE=miss
+export TEST_SEED_AVAILABLE=false
+"${self_dir}/select-build-environment"
+if ! grep --fixed-strings --line-regexp --quiet 'runner_size=large' "${GITHUB_OUTPUT}"
+then
+    printf 'A missing seed did not select the large builder.\n' >&2
+    exit 1
+fi
+export TEST_SEED_AVAILABLE=true
+
+: > "${GITHUB_OUTPUT}"
+printf 'docker://%s/staging-pruned:run-123-1\n' "${TEST_REGISTRY}" \
+    > "${TEST_STAGED_FILE}"
+export TEST_SELECTOR_CASE=hit
+export TEST_STAGED_CONFLICT=true
+if "${self_dir}/select-build-environment" >/dev/null 2>&1 \
+    || [[ -s ${GITHUB_OUTPUT} ]]
+then
+    printf 'A conflicting immutable staging tag was accepted.\n' >&2
+    exit 1
+fi
+unset TEST_STAGED_CONFLICT
+
+: > "${GITHUB_OUTPUT}"
+export TEST_SELECTOR_CASE=error
+if "${self_dir}/select-build-environment" >/dev/null 2>&1 \
+    || [[ -s ${GITHUB_OUTPUT} ]]
+then
+    printf 'An ECR lookup failure did not stop selection.\n' >&2
+    exit 1
+fi
+
+printf 'Hosted build-environment selection tests passed.\n'
