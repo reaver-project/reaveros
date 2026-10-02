@@ -12,18 +12,19 @@ on:
                 default: false
                 required: false
                 type: boolean
+            job_matrix:
+                description: Compiled matrix for a validation group
+                default: '{"include":[{"name":"Prepare"}]}'
+                required: false
+                type: string
             refresh_cache:
                 description: Refresh the container operating system
                 default: false
                 required: false
                 type: boolean
             runner_size:
-                description: Runner class used to distinguish preparation jobs
-                required: true
-                type: string
-            target:
-                description: Architecture or image selected by the caller matrix
-                default: ''
+                description: Runner size used for build-environment preparation
+                default: medium
                 required: false
                 type: string
             task:
@@ -43,13 +44,17 @@ permissions:
 
 jobs:
     run:
-        name: Run AWS ${{ inputs.task }} ${{ inputs.target }}
+        name: ${{ matrix.name }}
+        strategy:
+            fail-fast: false
+            matrix: ${{ fromJSON(inputs.job_matrix) }}
         runs-on:
             group: reaveros
             labels:
               - self-hosted
               - reaveros-aws
-              - reaveros-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.task == 'prepare' && format('prepare-{0}', inputs.runner_size) || format('{0}-{1}', inputs.task, inputs.target) }}
+              - reaveros-class-${{ inputs.task == 'prepare' && format('builder-{0}', inputs.runner_size) || matrix.runner_class }}
+              - reaveros-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.task == 'prepare' && format('prepare-{0}', inputs.runner_size) || matrix.id }}
         timeout-minutes: 240
 
         permissions:
@@ -82,7 +87,7 @@ jobs:
                 stack-name: ${{ vars.AWS_RUNNER_STACK_NAME }}
 
           - name: Configure the build-environment cache
-            if: inputs.task != 'boot'
+            if: inputs.task == 'prepare' || matrix.build_environment
             env:
                 CACHE_TAG: ${{ inputs.cache_tag }}
                 TASK: ${{ inputs.task }}
@@ -178,43 +183,24 @@ jobs:
                     "${REAVER_PROJECT_SCCACHE_HOST_DIR}/sccache" --show-stats
                 fi
 
-          - name: Check build-system dependencies
-            if: inputs.task == 'build-dependencies'
-            run: ./ci/check-build-dependencies '${{ inputs.target }}' "${BUILD_ENVIRONMENT_IMAGE}"
-
-          - name: Run unit tests
-            if: inputs.task == 'unit-tests'
-            run: ./ci/run-unit-tests '${{ inputs.target }}' "${BUILD_ENVIRONMENT_IMAGE}"
-
-          - name: Build image
-            if: inputs.task == 'image'
-            run: ./ci/build-image '${{ inputs.target }}' "${BUILD_ENVIRONMENT_IMAGE}" artifacts
-
-          - name: Upload image
-            if: inputs.task == 'image'
-            uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-            with:
-                name: image-${{ inputs.target }}-${{ github.run_id }}-${{ github.run_attempt }}
-                path: artifacts/${{ inputs.target }}.img
-                if-no-files-found: error
-                retention-days: 7
-
-          - name: Download image
-            if: inputs.task == 'boot'
+          - name: Download the input artifact
+            if: inputs.task == 'dispatch' && matrix.artifact_input != ''
             uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
             with:
-                name: image-${{ inputs.target }}-${{ github.run_id }}-${{ github.run_attempt }}
+                name: ${{ matrix.artifact_input }}-${{ github.run_id }}-${{ github.run_attempt }}
                 path: artifacts
 
-          - name: Smoke-test image
-            if: inputs.task == 'boot'
-            run: ./ci/smoke-test-uefi-amd64 "artifacts/${{ inputs.target }}.img" "artifacts/${{ inputs.target }}.serial.log"
+          - name: Run matrix job
+            if: inputs.task == 'dispatch'
+            env:
+                MATRIX_JOB: ${{ toJSON(matrix) }}
+            run: ./ci/aws/run-matrix-job
 
-          - name: Upload serial log
-            if: always() && inputs.task == 'boot'
+          - name: Upload the output artifact
+            if: always() && inputs.task == 'dispatch' && matrix.artifact_output != '' && (matrix.upload_on_failure || success())
             uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
             with:
-                name: serial-${{ inputs.target }}-${{ github.run_id }}-${{ github.run_attempt }}
-                path: artifacts/${{ inputs.target }}.serial.log
-                if-no-files-found: warn
+                name: ${{ matrix.artifact_output }}-${{ github.run_id }}-${{ github.run_attempt }}
+                path: artifacts/${{ matrix.artifact_file }}
+                if-no-files-found: ${{ matrix.upload_on_failure && 'warn' || 'error' }}
                 retention-days: 7

@@ -177,6 +177,56 @@ jobs:
                     exit 1
                 fi
 
+    build-matrix:
+        name: Compile CI matrix
+        if: needs.authorize.outputs.approved == 'true'
+        needs:
+          - authorize
+          - infrastructure-contract
+          - toolchain-update-state
+        runs-on: ubuntu-latest
+        timeout-minutes: 10
+        permissions:
+            contents: read
+        outputs:
+            standalone: ${{ steps.matrix.outputs.standalone }}
+            producer: ${{ steps.matrix.outputs.producer }}
+            consumer: ${{ steps.matrix.outputs.consumer }}
+            has_standalone: ${{ steps.matrix.outputs.has_standalone }}
+            has_producer: ${{ steps.matrix.outputs.has_producer }}
+            has_consumer: ${{ steps.matrix.outputs.has_consumer }}
+
+        steps:
+          - name: Check out the requested revision
+            uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+            with:
+                repository: ${{ github.repository }}
+                ref: ${{ github.sha }}
+                persist-credentials: false
+
+          - name: Install Python
+            uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+            with:
+                python-version: '3.13'
+
+          - name: Install the YAML parser
+            run: |
+                python3 -m pip install \
+                    --only-binary=:all: \
+                    --require-hashes \
+                    -r ci/matrix-requirements.txt
+
+          - name: Test the candidate CI configuration
+            run: |
+                python3 -m unittest discover -s ci/matrix -p 'test_*.py'
+                ./ci/aws/test-run-matrix-job
+                ./ci/aws/test-workflows
+                ./ci/test-build-image
+
+          - name: Compile the requested matrix
+            id: matrix
+            run: python3 ci/matrix/compile.py ci/matrix.yaml --workflow ci
+
     build-environment:
         name: Prepare build environment (medium)
         if: needs.authorize.outputs.approved == 'true'
@@ -184,6 +234,7 @@ jobs:
           - authorize
           - infrastructure-contract
           - toolchain-update-state
+          - build-matrix
         permissions:
             contents: read
         uses: ./.github/workflows/aws-runner.yml
@@ -254,98 +305,72 @@ jobs:
 
                 printf 'cache_tag=%s\n' "${CACHE_TAG}" >> "${GITHUB_OUTPUT}"
 
-    build-dependencies:
-        name: Check build-system dependencies (${{ matrix.arch }})
-        if: ${{ !cancelled() && needs.authorize.outputs.approved == 'true' && needs.build-environment-ready.result == 'success' }}
+    dispatch-standalone:
+        name: ${{ matrix.name }}
+        if: ${{ !cancelled() && needs.authorize.outputs.approved == 'true' && needs.build-environment-ready.result == 'success' && needs.build-matrix.outputs.has_standalone == 'true' }}
         needs:
           - authorize
+          - build-matrix
           - build-environment-ready
         permissions:
             contents: read
         strategy:
             fail-fast: false
-            matrix:
-                arch:
-                  - amd64
+            matrix: ${{ fromJSON(needs.build-matrix.outputs.standalone) }}
         uses: ./.github/workflows/aws-runner.yml
         with:
             cache_tag: ${{ needs.build-environment-ready.outputs.cache_tag }}
-            runner_size: medium
-            target: ${{ matrix.arch }}
-            task: build-dependencies
+            job_matrix: ${{ toJSON(matrix.job_matrix) }}
+            task: dispatch
 
-    unit-tests:
-        name: Unit tests (${{ matrix.arch }})
-        if: ${{ !cancelled() && needs.authorize.outputs.approved == 'true' && needs.build-environment-ready.result == 'success' }}
+    dispatch-producers:
+        name: ${{ matrix.name }}
+        if: ${{ !cancelled() && needs.authorize.outputs.approved == 'true' && needs.build-environment-ready.result == 'success' && needs.build-matrix.outputs.has_producer == 'true' }}
         needs:
           - authorize
+          - build-matrix
           - build-environment-ready
         permissions:
             contents: read
         strategy:
             fail-fast: false
-            matrix:
-                arch:
-                  - amd64
+            matrix: ${{ fromJSON(needs.build-matrix.outputs.producer) }}
         uses: ./.github/workflows/aws-runner.yml
         with:
             cache_tag: ${{ needs.build-environment-ready.outputs.cache_tag }}
-            runner_size: medium
-            target: ${{ matrix.arch }}
-            task: unit-tests
+            job_matrix: ${{ toJSON(matrix.job_matrix) }}
+            task: dispatch
 
-    image-build:
-        name: Build image (${{ matrix.image }})
-        if: ${{ !cancelled() && needs.authorize.outputs.approved == 'true' && needs.build-environment-ready.result == 'success' }}
+    dispatch-consumers:
+        name: ${{ matrix.name }}
+        if: ${{ !cancelled() && needs.authorize.outputs.approved == 'true' && needs.build-environment-ready.result == 'success' && needs.dispatch-producers.result == 'success' && needs.build-matrix.outputs.has_consumer == 'true' }}
         needs:
           - authorize
+          - build-matrix
           - build-environment-ready
+          - dispatch-producers
         permissions:
             contents: read
         strategy:
             fail-fast: false
-            matrix:
-                image:
-                  - uefi-efipart-amd64
+            matrix: ${{ fromJSON(needs.build-matrix.outputs.consumer) }}
         uses: ./.github/workflows/aws-runner.yml
         with:
             cache_tag: ${{ needs.build-environment-ready.outputs.cache_tag }}
-            runner_size: medium
-            target: ${{ matrix.image }}
-            task: image
-
-    boot-smoke:
-        name: Boot smoke test (${{ matrix.image }})
-        if: ${{ !cancelled() && needs.authorize.outputs.approved == 'true' && needs.build-environment-ready.result == 'success' && needs.image-build.result == 'success' }}
-        needs:
-          - authorize
-          - build-environment-ready
-          - image-build
-        permissions:
-            contents: read
-        strategy:
-            fail-fast: false
-            matrix:
-                image:
-                  - uefi-efipart-amd64
-        uses: ./.github/workflows/aws-runner.yml
-        with:
-            cache_tag: ${{ needs.build-environment-ready.outputs.cache_tag }}
-            runner_size: medium
-            target: ${{ matrix.image }}
-            task: boot
+            job_matrix: ${{ toJSON(matrix.job_matrix) }}
+            task: dispatch
 
     promote-build-environment:
         name: Promote validated build environment
-        if: ${{ !cancelled() && needs.authorize.outputs.approved == 'true' && needs.build-environment-ready.result == 'success' && needs.build-dependencies.result == 'success' && needs.unit-tests.result == 'success' && needs.image-build.result == 'success' && needs.boot-smoke.result == 'success' }}
+        if: ${{ !cancelled() && needs.authorize.outputs.approved == 'true' && needs.build-environment-ready.result == 'success' && (needs.build-matrix.outputs.has_standalone != 'true' || needs.dispatch-standalone.result == 'success') && (needs.build-matrix.outputs.has_producer != 'true' || needs.dispatch-producers.result == 'success') && (needs.build-matrix.outputs.has_consumer != 'true' || needs.dispatch-consumers.result == 'success') }}
         needs:
           - authorize
+          - build-matrix
           - build-environment
           - build-environment-ready
-          - build-dependencies
-          - unit-tests
-          - image-build
-          - boot-smoke
+          - dispatch-standalone
+          - dispatch-producers
+          - dispatch-consumers
         permissions:
             contents: read
             id-token: write
@@ -361,11 +386,11 @@ jobs:
           - authorize
           - infrastructure-contract
           - toolchain-update-state
+          - build-matrix
           - build-environment-ready
-          - build-dependencies
-          - unit-tests
-          - image-build
-          - boot-smoke
+          - dispatch-standalone
+          - dispatch-producers
+          - dispatch-consumers
           - promote-build-environment
         runs-on: ubuntu-latest
         timeout-minutes: 5
@@ -374,15 +399,18 @@ jobs:
           - name: Report result
             env:
                 APPROVED: ${{ needs.authorize.outputs.approved }}
-                BOOT_RESULT: ${{ needs.boot-smoke.result }}
-                BUILD_DEPENDENCIES_RESULT: ${{ needs.build-dependencies.result }}
+                HAS_CONSUMER: ${{ needs.build-matrix.outputs.has_consumer }}
+                HAS_PRODUCER: ${{ needs.build-matrix.outputs.has_producer }}
+                HAS_STANDALONE: ${{ needs.build-matrix.outputs.has_standalone }}
+                CONSUMER_RESULT: ${{ needs.dispatch-consumers.result }}
+                STANDALONE_RESULT: ${{ needs.dispatch-standalone.result }}
                 BUILD_ENVIRONMENT_RESULT: ${{ needs.build-environment-ready.result }}
-                IMAGE_RESULT: ${{ needs.image-build.result }}
+                PRODUCER_RESULT: ${{ needs.dispatch-producers.result }}
                 INFRASTRUCTURE_CONTRACT_RESULT: ${{ needs.infrastructure-contract.result }}
+                MATRIX_RESULT: ${{ needs.build-matrix.result }}
                 PROMOTION_RESULT: ${{ needs.promote-build-environment.result }}
                 REASON: ${{ needs.authorize.outputs.reason }}
                 TOOLCHAIN_STATE_RESULT: ${{ needs.toolchain-update-state.result }}
-                UNIT_TESTS_RESULT: ${{ needs.unit-tests.result }}
             run: |
                 if [[ ${APPROVED} != true ]]
                 then
@@ -403,12 +431,31 @@ jobs:
                     exit 1
                 fi
 
+                if [[ ${MATRIX_RESULT} != success ]]
+                then
+                    printf '::error::CI matrix compilation finished with %s.\n' \
+                        "${MATRIX_RESULT}"
+                    exit 1
+                fi
+
+                if [[ ${HAS_STANDALONE} != true ]]
+                then
+                    STANDALONE_RESULT=success
+                fi
+                if [[ ${HAS_PRODUCER} != true ]]
+                then
+                    PRODUCER_RESULT=success
+                fi
+                if [[ ${HAS_CONSUMER} != true ]]
+                then
+                    CONSUMER_RESULT=success
+                fi
+
                 for result in \
                     "build environment:${BUILD_ENVIRONMENT_RESULT}" \
-                    "build dependencies:${BUILD_DEPENDENCIES_RESULT}" \
-                    "unit tests:${UNIT_TESTS_RESULT}" \
-                    "image build:${IMAGE_RESULT}" \
-                    "boot smoke test:${BOOT_RESULT}" \
+                    "standalone validation:${STANDALONE_RESULT}" \
+                    "producer validation:${PRODUCER_RESULT}" \
+                    "consumer validation:${CONSUMER_RESULT}" \
                     "cache promotion:${PROMOTION_RESULT}"
                 do
                     name=${result%%:*}
