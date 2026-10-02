@@ -78,7 +78,7 @@ jobs:
 
           - name: Configure the host compiler cache
             if: inputs.task == 'prepare'
-            uses: reaver-project/infrastructure/actions/compiler-cache@3a9b9a66a7242709589765475f93e9e33ddb07cc
+            uses: reaver-project/infrastructure/actions/compiler-cache@d1571c6b517ff7e573c37f4ebbe739a74e7784e2
             env:
                 SCCACHE_SKIP_CACHE_CHECK: 'true'
             with:
