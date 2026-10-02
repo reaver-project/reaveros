@@ -8,6 +8,7 @@ repo_root=$(git -C "${self_dir}" rev-parse --show-toplevel)
 source "${self_dir}/compiler-cache.sh"
 defer_llvm=false
 refresh=false
+probe=false
 
 while [[ $# -gt 0 ]]
 do
@@ -18,13 +19,22 @@ do
         --refresh)
             refresh=true
             ;;
+        --probe)
+            probe=true
+            ;;
         *)
-            printf 'usage: %s [--defer-llvm] [--refresh]\n' "$0" >&2
+            printf 'usage: %s [--defer-llvm] [--refresh] [--probe]\n' "$0" >&2
             exit 2
             ;;
     esac
     shift
 done
+
+if ${probe} && ${defer_llvm}
+then
+    printf '%s: --probe and --defer-llvm are exclusive.\n' "$0" >&2
+    exit 2
+fi
 
 unpruned_image=$("${self_dir}/image-ref" unpruned)
 pruned_image=$("${self_dir}/image-ref" pruned)
@@ -74,7 +84,7 @@ reuse_pair()
     report_result false true
 }
 
-if ! ${refresh} \
+if ! ${refresh} && ! ${probe} \
     && docker pull "${unpruned_image}" \
     && docker pull "${pruned_image}"
 then
@@ -82,7 +92,7 @@ then
     exit 0
 fi
 
-if ! ${refresh} \
+if ! ${refresh} && ! ${probe} \
     && docker pull "${seed_unpruned_image}" \
     && docker pull "${seed_pruned_image}"
 then
@@ -90,7 +100,7 @@ then
     exit 0
 fi
 
-if ! ${refresh} \
+if ! ${refresh} && ! ${probe} \
     && [[ -n ${fallback_unpruned_repository} ]] \
     && [[ -n ${fallback_pruned_repository} ]] \
     && docker pull "${fallback_unpruned_repository}:${seed_tag}" \
@@ -118,8 +128,7 @@ elif [[ -n ${fallback_unpruned_repository} ]] \
     && "${self_dir}/image-matches-base" "${fallback_unpruned_repository}:latest"
 then
     seed_image="${fallback_unpruned_repository}:latest"
-elif [[ -z ${fallback_unpruned_repository} ]] \
-    && docker pull "${seed_unpruned_repository}:latest" \
+elif docker pull "${seed_unpruned_repository}:latest" \
     && "${self_dir}/image-matches-base" "${seed_unpruned_repository}:latest"
 then
     seed_image="${seed_unpruned_repository}:latest"
@@ -127,6 +136,11 @@ fi
 
 if [[ -z ${seed_image} ]]
 then
+    if ${probe}
+    then
+        printf 'reaveros_probe_runner_size=large\n'
+        exit 0
+    fi
     if ${defer_llvm}
     then
         printf 'No cached build environment is available; deferring the complete build to a large runner.\n'
@@ -135,6 +149,26 @@ then
     fi
     "${self_dir}/build-image"
     report_result false true
+    exit 0
+fi
+
+if ${probe}
+then
+    docker run --rm \
+        --network none \
+        --volume "${repo_root}:/reaveros:ro" \
+        "${seed_image}" \
+        /reaveros/docker/build-toolchain --probe \
+        | tee "${update_log}"
+    llvm_rebuild=$(awk -F= '/^reaveros_llvm_rebuild=/{ print $2 }' "${update_log}" | tail -n1)
+    case ${llvm_rebuild} in
+        true) printf 'reaveros_probe_runner_size=large\n' ;;
+        false) printf 'reaveros_probe_runner_size=medium\n' ;;
+        *)
+            printf 'The toolchain probe did not report an LLVM decision.\n' >&2
+            exit 1
+            ;;
+    esac
     exit 0
 fi
 

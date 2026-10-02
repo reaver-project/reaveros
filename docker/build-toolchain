@@ -14,8 +14,11 @@ do
         --update)
             mode=update
             ;;
+        --probe)
+            mode=probe
+            ;;
         *)
-            printf 'usage: %s [--update [--defer-llvm]]\n' "$0" >&2
+            printf 'usage: %s [--update [--defer-llvm]|--probe]\n' "$0" >&2
             exit 2
             ;;
     esac
@@ -82,6 +85,12 @@ fi
 
 printf 'Toolchain rebuild required: %s\n' "${all_toolchain}"
 printf 'LLVM rebuild required: %s\n' "${llvm}"
+
+if [[ ${mode} == probe ]]
+then
+    printf 'reaveros_llvm_rebuild=%s\n' "${llvm}"
+    exit 0
+fi
 
 if ${defer_llvm} && ${llvm}
 then
