@@ -19,7 +19,8 @@ docker run --rm \
         set -euo pipefail
         architecture=$1
         cd /build
-        cmake /reaveros -DREAVEROS_ENABLE_UNIT_TESTS=ON
+        cmake /reaveros -DREAVEROS_ENABLE_UNIT_TESTS=ON \
+            -DREAVEROS_ARCHITECTURES="${architecture}"
 
         mapfile -t install_targets < <(
             make help \

@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $# -ne 1 || -z ${BUILD_ENVIRONMENT_IMAGE:-} ]]
+then
+    printf 'usage: %s <compiled job> (with BUILD_ENVIRONMENT_IMAGE)\n' "$0" >&2
+    exit 2
+fi
+
+architecture=$(jq --exit-status --raw-output '.tags.architecture' <<< "$1")
+loader=$(jq --exit-status --raw-output '.tags.loader' <<< "$1")
+layout=$(jq --exit-status --raw-output '.tags.layout' <<< "$1")
+
+./ci/build-image "${architecture}" "${loader}" "${layout}" \
+    "${BUILD_ENVIRONMENT_IMAGE}" artifacts
+mv "artifacts/${loader}-${layout}-${architecture}.img" artifacts/image.img

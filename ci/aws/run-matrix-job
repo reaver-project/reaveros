@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $# -ne 0 || -z ${MATRIX_JOB:-} ]]
+then
+    printf 'MATRIX_JOB must contain one compiled CI job.\n' >&2
+    exit 2
+fi
+
+invoke=$(jq --exit-status --raw-output '.invoke' <<< "${MATRIX_JOB}")
+if [[ ! ${invoke} =~ ^[a-z][a-z0-9-]*$ ]]
+then
+    printf 'Invalid matrix job invocation: %s\n' "${invoke}" >&2
+    exit 2
+fi
+
+script="ci/jobs/${invoke}"
+if [[ ! -x ${script} ]]
+then
+    printf 'Matrix job script is not executable: %s\n' "${script}" >&2
+    exit 2
+fi
+
+exec "./${script}" "${MATRIX_JOB}"

@@ -165,7 +165,7 @@ fi
 # shellcheck disable=SC2016
 if [[ $(grep --fixed-strings --count \
     'cache_tag: ${{ needs.build-environment-ready.outputs.cache_tag }}' \
-    "${ci_workflow}") -ne 4 ]] \
+    "${ci_workflow}") -ne 3 ]] \
     || ! grep --fixed-strings --quiet \
         'cache_tag: ${{ steps.ready.outputs.cache_tag }}' "${ci_workflow}" \
     || ! grep --fixed-strings --quiet \
@@ -195,24 +195,41 @@ require_ci_condition()
     done
 }
 
-for validation_job in build-dependencies unit-tests image-build
+for validation_job in dispatch-standalone dispatch-producers
 do
     require_ci_condition "${validation_job}" \
         '!cancelled()' \
         "needs.authorize.outputs.approved == 'true'" \
         "needs.build-environment-ready.result == 'success'"
 done
-require_ci_condition boot-smoke \
+require_ci_condition dispatch-consumers \
     '!cancelled()' \
     "needs.build-environment-ready.result == 'success'" \
-    "needs.image-build.result == 'success'"
+    "needs.dispatch-producers.result == 'success'"
 require_ci_condition promote-build-environment \
     '!cancelled()' \
     "needs.build-environment-ready.result == 'success'" \
-    "needs.build-dependencies.result == 'success'" \
-    "needs.unit-tests.result == 'success'" \
-    "needs.image-build.result == 'success'" \
-    "needs.boot-smoke.result == 'success'"
+    "needs.build-matrix.outputs.has_standalone != 'true' || needs.dispatch-standalone.result == 'success'" \
+    "needs.build-matrix.outputs.has_producer != 'true' || needs.dispatch-producers.result == 'success'" \
+    "needs.build-matrix.outputs.has_consumer != 'true' || needs.dispatch-consumers.result == 'success'"
+
+for matrix_invariant in \
+    'python3 -m unittest discover -s ci/matrix' \
+    './ci/aws/test-run-matrix-job' \
+    './ci/aws/test-workflows' \
+    'python3 ci/matrix/compile.py ci/matrix.yaml --workflow ci' \
+    'matrix: ${{ fromJSON(needs.build-matrix.outputs.standalone) }}' \
+    'matrix: ${{ fromJSON(needs.build-matrix.outputs.producer) }}' \
+    'matrix: ${{ fromJSON(needs.build-matrix.outputs.consumer) }}' \
+    'job_matrix: ${{ toJSON(matrix.job_matrix) }}'
+do
+    if ! grep --fixed-strings --quiet "${matrix_invariant}" "${ci_workflow}"
+    then
+        printf 'The compiled CI matrix is not consumed: %s\n' \
+            "${matrix_invariant}" >&2
+        exit 1
+    fi
+done
 
 for reusable_workflow in \
     "${repo_root}/.github/workflows/aws-runner.yml" \
@@ -236,7 +253,10 @@ for compiler_cache_invariant in \
     "uses: reaver-project/infrastructure/actions/compiler-cache@${infrastructure_revision}" \
     "SCCACHE_SKIP_CACHE_CHECK: 'true'" \
     'group: reaveros' \
+    'matrix: ${{ fromJSON(inputs.job_matrix) }}' \
+    'reaveros-class-${{ inputs.task ==' \
     'reaveros-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.task ==' \
+    'run: ./ci/aws/run-matrix-job' \
     'project-slug: reaveros'; do
     if ! grep --fixed-strings --quiet \
         "${compiler_cache_invariant}" "${runner_workflow}"; then
@@ -259,7 +279,7 @@ then
     exit 1
 fi
 if [[ $(grep --fixed-strings --count 'runner_size: large' "${ci_workflow}") -ne 1 ||
-    $(grep --fixed-strings --count 'runner_size: medium' "${ci_workflow}") -ne 5 ]]
+    $(grep --fixed-strings --count 'runner_size: medium' "${ci_workflow}") -ne 1 ]]
 then
     printf 'Preparation runner classes are not uniquely identified.\n' >&2
     exit 1

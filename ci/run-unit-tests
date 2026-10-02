@@ -12,6 +12,18 @@ architecture=$1
 build_environment=$2
 repo_root=$(git rev-parse --show-toplevel)
 
+case $(uname -m) in
+    x86_64) host_architecture=amd64 ;;
+    aarch64) host_architecture=aarch64 ;;
+    *) host_architecture=unsupported ;;
+esac
+if [[ ${architecture} != "${host_architecture}" ]]
+then
+    printf 'Cannot execute %s unit tests on a %s host.\n' \
+        "${architecture}" "${host_architecture}" >&2
+    exit 2
+fi
+
 docker run --rm \
     --volume "${repo_root}:/reaveros:ro" \
     "${build_environment}" \
@@ -19,7 +31,8 @@ docker run --rm \
         set -euo pipefail
         architecture=$1
         cd /build
-        cmake /reaveros -DREAVEROS_ENABLE_UNIT_TESTS=ON
+        cmake /reaveros -DREAVEROS_ENABLE_UNIT_TESTS=ON \
+            -DREAVEROS_ARCHITECTURES="${architecture}"
         make "all-${architecture}-build-tests" -j"$(nproc)"
         ctest --output-on-failure -j"$(nproc)"
     ' -- "${architecture}"
