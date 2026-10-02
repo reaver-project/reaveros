@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $(basename -- "$0") == docker ]]
+then
+    printf '%s\n' "$@" >> "${UPDATE_IMAGES_TEST_LOG}"
+    case $1 in
+        pull)
+            [[ $2 == example.invalid/reaveros-unpruned:seed ]]
+            ;;
+        run)
+            if [[ " $* " == *' /reaveros/docker/build-toolchain '* ]]
+            then
+                printf 'reaveros_update_result=updated\n'
+            fi
+            ;;
+        export)
+            printf 'test image contents'
+            ;;
+        import)
+            cat > /dev/null
+            ;;
+    esac
+    exit
+fi
+
+self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+test_directory=$(mktemp -d)
+cleanup()
+{
+    rm -r -- "${test_directory}"
+}
+trap cleanup EXIT
+
+mkdir "${test_directory}/bin"
+ln -s "${self_dir}/test-update-images" "${test_directory}/bin/docker"
+export PATH="${test_directory}/bin:${PATH}"
+export UPDATE_IMAGES_TEST_LOG="${test_directory}/calls"
+: > "${UPDATE_IMAGES_TEST_LOG}"
+
+export REAVEROS_BUILD_ENV_IMAGE=example.invalid/reaveros-pruned
+export REAVEROS_BUILD_ENV_UNPRUNED_IMAGE=example.invalid/reaveros-unpruned
+export REAVEROS_BUILD_ENV_TAG=updated
+export REAVEROS_BUILD_ENV_SEED_TAG=seed
+
+"${self_dir}/update-images"
+
+source_label='LABEL org.opencontainers.image.source=https://github.com/reaver-project/reaveros'
+if [[ $(grep --fixed-strings --line-regexp --count \
+    "${source_label}" "${UPDATE_IMAGES_TEST_LOG}") -ne 2 ]]
+then
+    printf 'Updated and pruned images need the ReaverOS source label.\n' >&2
+    exit 1
+fi
+
+printf 'Build-environment update labels passed.\n'

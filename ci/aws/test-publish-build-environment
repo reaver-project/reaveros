@@ -49,8 +49,19 @@ then
     elif [[ $1 == inspect ]]
     then
         reference=${*: -1}
-        state_file=$(printf '%s' "${reference}" | sha256sum | cut -d ' ' -f 1)
-        cat "${PUBLISH_TEST_STATE}/${state_file}"
+        if [[ $2 == --raw ]]
+        then
+            state_file=$(printf '%s' "${reference}" | sha256sum | cut -d ' ' -f 1)
+            cat "${PUBLISH_TEST_STATE}/${state_file}"
+        else
+            source=https://github.com/reaver-project/reaveros
+            if [[ ${reference} == "${PUBLISH_TEST_BAD_LABEL_IMAGE:-}" ]]
+            then
+                source=https://github.com/reaver-project/infrastructure
+            fi
+            printf '{"Labels":{"org.opencontainers.image.source":"%s"}}\n' \
+                "${source}"
+        fi
     elif [[ $1 == copy ]]
     then
         source=${*: -2:1}
@@ -186,6 +197,22 @@ done
     "${run_tag}"
 assert_log_count 6 $'skopeo\tcopy'
 assert_destinations_match_sources
+
+export PUBLISH_TEST_BAD_LABEL_IMAGE="docker://${source_unpruned_image}:${run_tag}"
+: > "${PUBLISH_TEST_LOG}"
+if "${self_dir}/publish-build-environment" \
+    "${source_image}" \
+    "${source_unpruned_image}" \
+    "${destination_image}" \
+    "${destination_unpruned_image}" \
+    "${content_tag}" \
+    "${run_tag}" > /dev/null 2>&1
+then
+    printf 'Publication accepted an image sourced from infrastructure.\n' >&2
+    exit 1
+fi
+assert_log_count 0 $'skopeo\tcopy'
+unset PUBLISH_TEST_BAD_LABEL_IMAGE
 
 : > "${PUBLISH_TEST_LOG}"
 if "${self_dir}/publish-build-environment" \

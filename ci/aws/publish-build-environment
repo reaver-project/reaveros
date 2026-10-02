@@ -51,6 +51,21 @@ printf '%s' "${GHCR_TOKEN}" \
         --password-stdin \
         ghcr.io
 
+expected_source=https://github.com/reaver-project/reaveros
+for image in "${source_image}" "${source_unpruned_image}"
+do
+    if ! skopeo inspect \
+        --authfile "${auth_file}" \
+        "docker://${image}:${run_tag}" \
+        | jq --exit-status --arg source "${expected_source}" \
+            '.Labels["org.opencontainers.image.source"] == $source' > /dev/null
+    then
+        printf 'Refusing to publish an image without the ReaverOS source label: %s\n' \
+            "${image}:${run_tag}" >&2
+        exit 1
+    fi
+done
+
 copy_image()
 {
     source=$1

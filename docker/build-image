@@ -39,7 +39,7 @@ docker run \
     '
 
 docker export "${container}" \
-    | docker import --change 'CMD ["/usr/bin/env", "bash"]' - "${unpruned_image}"
+    | "${self_dir}/import-build-environment" "${unpruned_image}"
 
 docker tag "${unpruned_image}" "${unpruned_repository}:latest"
 "${self_dir}/prune-image" "${unpruned_image}" "${pruned_image}"

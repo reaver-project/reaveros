@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $(basename -- "$0") == docker ]]
+then
+    printf '%s\n' "$@" >> "${BUILD_ENVIRONMENT_TEST_LOG}"
+    if [[ $1 == export ]]
+    then
+        printf 'test image contents'
+    elif [[ $1 == import ]]
+    then
+        cat > /dev/null
+    fi
+    exit
+fi
+
+self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+test_directory=$(mktemp -d)
+cleanup()
+{
+    rm -r -- "${test_directory}"
+}
+trap cleanup EXIT
+
+mkdir "${test_directory}/bin"
+ln -s "${self_dir}/test-build-image" "${test_directory}/bin/docker"
+export PATH="${test_directory}/bin:${PATH}"
+export BUILD_ENVIRONMENT_TEST_LOG="${test_directory}/calls"
+: > "${BUILD_ENVIRONMENT_TEST_LOG}"
+
+export REAVEROS_BUILD_ENV_IMAGE=example.invalid/reaveros-pruned
+export REAVEROS_BUILD_ENV_UNPRUNED_IMAGE=example.invalid/reaveros-unpruned
+export REAVEROS_BUILD_ENV_TAG=test
+
+"${self_dir}/build-image"
+
+source_label='LABEL org.opencontainers.image.source=https://github.com/reaver-project/reaveros'
+if [[ $(grep --fixed-strings --line-regexp --count \
+    "${source_label}" "${BUILD_ENVIRONMENT_TEST_LOG}") -ne 2 ]]
+then
+    printf 'Both build-environment image variants need the ReaverOS source label.\n' >&2
+    exit 1
+fi
+
+printf 'Build-environment image source labels passed.\n'

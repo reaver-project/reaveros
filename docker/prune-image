@@ -34,4 +34,4 @@ docker run --name "${container}" \
 '
 
 docker export "${container}" \
-    | docker import --change 'CMD ["/usr/bin/env", "bash"]' - "${pruned_image}"
+    | "${self_dir}/import-build-environment" "${pruned_image}"
