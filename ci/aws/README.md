@@ -82,11 +82,13 @@ expiry reaper both remove the registration and terminate the instance.
 
 ## Jobs and caches
 
-The medium preparation job first asks the existing build graph whether LLVM
-would be rebuilt. It defers a full LLVM rebuild to the large runner; other
-toolchain work remains on the medium runner. Once a candidate image is ready,
-build-dependency checks, unit tests, image construction, and the boot smoke test
-remain separate jobs with independent reporting.
+A GitHub-hosted selector first looks for an exact cached pruned/unpruned image
+pair. On a hit it copies the pair into per-run staging without provisioning an
+AWS builder. On a miss it frees unused hosted-runner disk space, pulls a
+compatible unpruned seed, and asks the existing build graph whether LLVM would
+be rebuilt. One medium or large AWS builder then prepares the image. Once it is
+ready, build-dependency checks, unit tests, image construction, and the boot
+smoke test remain separate jobs with independent reporting.
 
 Per-run image tags are written to staging repositories and expire after three
 days. Successful validation promotes their content-derived tag to immutable

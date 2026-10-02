@@ -1,0 +1,182 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $# -ne 0 || -z ${AWS_REGION:-} || -z ${AWS_RUNNER_STACK_NAME:-} \
+    || -z ${CACHE_TAG:-} || -z ${GITHUB_OUTPUT:-} \
+    || ! ${CACHE_TAG} =~ ^run-[0-9]+-[0-9]+$ \
+    || ! ${REFRESH_CACHE:-false} =~ ^(true|false)$ ]]
+then
+    printf 'The hosted selector needs valid AWS_REGION, AWS_RUNNER_STACK_NAME, CACHE_TAG, REFRESH_CACHE and GITHUB_OUTPUT.\n' >&2
+    exit 2
+fi
+
+self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+repo_root=$(git -C "${self_dir}" rev-parse --show-toplevel)
+stack_outputs=$(aws cloudformation describe-stacks \
+    --region "${AWS_REGION}" \
+    --stack-name "${AWS_RUNNER_STACK_NAME}" \
+    --query 'Stacks[0].Outputs' \
+    --output json \
+    | jq --exit-status 'map({key: .OutputKey, value: .OutputValue}) | from_entries')
+repository_names=$("${self_dir}/strip-ecr-registry" "${AWS_REGION}" \
+    <<< "${stack_outputs}")
+registry=$(jq --exit-status --raw-output \
+    '.BuildEnvironmentRepositoryUri | split("/")[0]' <<< "${stack_outputs}")
+content_tag=$("${repo_root}/docker/toolchain-key")
+if [[ ! ${content_tag} =~ ^[0-9a-f]{64}$ ]]
+then
+    printf 'The content-derived toolchain tag is invalid.\n' >&2
+    exit 1
+fi
+
+repository()
+{
+    jq --exit-status --raw-output --arg name "$1" '.[$name]' \
+        <<< "${repository_names}"
+}
+
+production_pruned=$(repository BuildEnvironmentRepositoryUri)
+production_unpruned=$(repository UnprunedBuildEnvironmentRepositoryUri)
+candidate_pruned=$(repository CandidateBuildEnvironmentRepositoryUri)
+candidate_unpruned=$(repository CandidateUnprunedBuildEnvironmentRepositoryUri)
+staging_pruned=$(repository StagingBuildEnvironmentRepositoryUri)
+staging_unpruned=$(repository StagingUnprunedBuildEnvironmentRepositoryUri)
+
+image_digest()
+{
+    local image_repository=$1 image_tag=$2 response
+    response=$(aws ecr batch-get-image \
+        --region "${AWS_REGION}" \
+        --repository-name "${image_repository}" \
+        --image-ids "imageTag=${image_tag}" \
+        --output json)
+    if jq --exit-status '
+        (.images | length) == 1 and (.failures | length) == 0
+        and (.images[0].imageId.imageDigest | test("^sha256:[0-9a-f]{64}$"))
+    ' <<< "${response}" >/dev/null
+    then
+        jq --exit-status --raw-output '.images[0].imageId.imageDigest' \
+            <<< "${response}"
+        return 0
+    fi
+    if jq --exit-status '
+        (.images | length) == 0 and (.failures | length) == 1
+        and .failures[0].failureCode == "ImageNotFound"
+    ' <<< "${response}" >/dev/null
+    then
+        return 1
+    fi
+    printf 'Unexpected ECR image response for %s:%s.\n' \
+        "${image_repository}" "${image_tag}" >&2
+    return 2
+}
+
+copy_cached_image()
+{
+    local source=$1 destination=$2 source_digest=$3 existing_digest status=0
+    existing_digest=$(image_digest "${destination}" "${CACHE_TAG}") || status=$?
+    if (( status == 0 ))
+    then
+        if [[ ${existing_digest} != "${source_digest}" ]]
+        then
+            printf 'The immutable staging tag already has different content: %s:%s.\n' \
+                "${destination}" "${CACHE_TAG}" >&2
+            return 1
+        fi
+        return 0
+    fi
+    if (( status != 1 ))
+    then
+        return 1
+    fi
+    skopeo copy --all --preserve-digests --authfile "${auth_directory}/auth.json" \
+        "docker://${registry}/${source}:${content_tag}" \
+        "docker://${registry}/${destination}:${CACHE_TAG}"
+    existing_digest=$(image_digest "${destination}" "${CACHE_TAG}")
+    if [[ ${existing_digest} != "${source_digest}" ]]
+    then
+        printf 'The staged image digest differs from its cached source.\n' >&2
+        return 1
+    fi
+}
+
+report_selection()
+{
+    local mode=$1 size=$2
+    {
+        printf 'mode=%s\n' "${mode}"
+        printf 'runner_size=%s\n' "${size}"
+        printf 'cache_tag=%s\n' "${CACHE_TAG}"
+    } >> "${GITHUB_OUTPUT}"
+}
+
+if [[ ${REFRESH_CACHE:-false} == false ]]
+then
+    for source_kind in production candidate
+    do
+        if [[ ${source_kind} == production ]]
+        then
+            source_pruned=${production_pruned}
+            source_unpruned=${production_unpruned}
+        else
+            source_pruned=${candidate_pruned}
+            source_unpruned=${candidate_unpruned}
+        fi
+        pruned_status=0
+        unpruned_status=0
+        pruned_digest=$(image_digest "${source_pruned}" "${content_tag}") || pruned_status=$?
+        unpruned_digest=$(image_digest "${source_unpruned}" "${content_tag}") || unpruned_status=$?
+        if (( pruned_status > 1 || unpruned_status > 1 ))
+        then
+            printf 'The cache lookup failed for the %s image pair.\n' "${source_kind}" >&2
+            exit 1
+        fi
+        if (( pruned_status == 0 && unpruned_status == 0 ))
+        then
+            auth_directory=$(mktemp -d /dev/shm/reaveros-ecr.XXXXXX)
+            trap 'rm -r -- "${auth_directory}"' EXIT
+            aws ecr get-login-password --region "${AWS_REGION}" \
+                | skopeo login --authfile "${auth_directory}/auth.json" \
+                    --username AWS --password-stdin "${registry}"
+            copy_cached_image "${source_pruned}" "${staging_pruned}" "${pruned_digest}"
+            copy_cached_image "${source_unpruned}" "${staging_unpruned}" "${unpruned_digest}"
+            printf 'Reused the exact %s build-environment pair.\n' "${source_kind}"
+            report_selection reuse medium
+            exit 0
+        fi
+    done
+fi
+
+if [[ ${RUNNER_ENVIRONMENT:-} == github-hosted ]]
+then
+    "${self_dir}/free-hosted-runner-space"
+fi
+
+docker_auth_directory=$(mktemp -d /dev/shm/reaveros-docker.XXXXXX)
+probe_log=${docker_auth_directory}/probe.log
+cleanup_probe()
+{
+    rm -r -- "${docker_auth_directory}"
+}
+trap cleanup_probe EXIT
+export DOCKER_CONFIG=${docker_auth_directory}
+aws ecr get-login-password --region "${AWS_REGION}" \
+    | docker login --username AWS --password-stdin "${registry}"
+export REAVEROS_BUILD_ENV_IMAGE="${registry}/${staging_pruned}"
+export REAVEROS_BUILD_ENV_UNPRUNED_IMAGE="${registry}/${staging_unpruned}"
+export REAVEROS_BUILD_ENV_TAG=${CACHE_TAG}
+export REAVEROS_BUILD_ENV_SEED_IMAGE="${registry}/${production_pruned}"
+export REAVEROS_BUILD_ENV_SEED_UNPRUNED_IMAGE="${registry}/${production_unpruned}"
+export REAVEROS_BUILD_ENV_SEED_TAG=${content_tag}
+export REAVEROS_BUILD_ENV_FALLBACK_IMAGE="${registry}/${candidate_pruned}"
+export REAVEROS_BUILD_ENV_FALLBACK_UNPRUNED_IMAGE="${registry}/${candidate_unpruned}"
+
+"${repo_root}/docker/update-images" --probe | tee "${probe_log}"
+runner_size=$(awk -F= '/^reaveros_probe_runner_size=/{ print $2 }' "${probe_log}" | tail -n1)
+if [[ ! ${runner_size} =~ ^(medium|large)$ ]]
+then
+    printf 'The Docker probe did not select a valid builder size.\n' >&2
+    exit 1
+fi
+report_selection build "${runner_size}"

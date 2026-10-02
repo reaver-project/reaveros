@@ -7,11 +7,6 @@ on:
                 description: Per-run candidate build-environment tag
                 required: true
                 type: string
-            defer_llvm:
-                description: Leave an LLVM rebuild for a subsequent large runner
-                default: false
-                required: false
-                type: boolean
             job_matrix:
                 description: Compiled matrix for a validation group
                 default: '{"include":[{"name":"Prepare"}]}'
@@ -32,9 +27,6 @@ on:
                 required: true
                 type: string
         outputs:
-            needs_large:
-                description: Whether build-environment preparation detected an LLVM rebuild
-                value: ${{ jobs.run.outputs.needs_large }}
             ready:
                 description: Whether this runner produced the requested candidate environment
                 value: ${{ jobs.run.outputs.ready }}
@@ -61,7 +53,6 @@ jobs:
             contents: read
 
         outputs:
-            needs_large: ${{ steps.prepare.outputs.needs_large }}
             ready: ${{ steps.prepare.outputs.ready }}
 
         env:
@@ -151,15 +142,10 @@ jobs:
             id: prepare
             if: inputs.task == 'prepare'
             env:
-                DEFER_LLVM: ${{ inputs.defer_llvm }}
                 REFRESH_CACHE: ${{ inputs.refresh_cache }}
             run: |
                 set -euo pipefail
                 arguments=()
-                if [[ ${DEFER_LLVM} == true ]]
-                then
-                    arguments+=(--defer-llvm)
-                fi
                 if [[ ${REFRESH_CACHE} == true ]]
                 then
                     arguments+=(--refresh)

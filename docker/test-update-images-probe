@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $(basename -- "$0") == docker ]]
+then
+    printf '%s\n' "$*" >> "${UPDATE_PROBE_TEST_LOG}"
+    case $1 in
+        pull)
+            [[ $2 == example.invalid/reaveros-unpruned:seed && ${TEST_SEED_AVAILABLE} == true ]] \
+                || [[ $2 == example.invalid/reaveros-unpruned:latest \
+                    && ${TEST_PRODUCTION_LATEST_AVAILABLE:-false} == true ]]
+            ;;
+        run)
+            printf 'reaveros_llvm_rebuild=%s\n' "${TEST_LLVM_REBUILD}"
+            ;;
+        rm)
+            ;;
+        *)
+            printf 'Probe attempted Docker operation %s.\n' "$1" >&2
+            exit 1
+            ;;
+    esac
+    exit
+fi
+
+self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+test_directory=$(mktemp -d)
+trap 'rm -r -- "${test_directory}"' EXIT
+mkdir "${test_directory}/bin"
+ln -s "${self_dir}/test-update-images-probe" "${test_directory}/bin/docker"
+export PATH="${test_directory}/bin:${PATH}"
+export UPDATE_PROBE_TEST_LOG="${test_directory}/docker-calls"
+export REAVEROS_BUILD_ENV_IMAGE=example.invalid/reaveros-pruned
+export REAVEROS_BUILD_ENV_UNPRUNED_IMAGE=example.invalid/reaveros-unpruned
+export REAVEROS_BUILD_ENV_TAG=updated
+export REAVEROS_BUILD_ENV_SEED_TAG=seed
+
+for expected in medium large
+do
+    : > "${UPDATE_PROBE_TEST_LOG}"
+    export TEST_SEED_AVAILABLE=true
+    if [[ ${expected} == large ]]
+    then
+        export TEST_LLVM_REBUILD=true
+    else
+        export TEST_LLVM_REBUILD=false
+    fi
+    output=$("${self_dir}/update-images" --probe)
+    if [[ ${output} != *"reaveros_probe_runner_size=${expected}"* ]] \
+        || ! grep --fixed-strings --quiet 'run --rm --network none' "${UPDATE_PROBE_TEST_LOG}" \
+        || ! grep --fixed-strings --quiet '/reaveros/docker/build-toolchain --probe' "${UPDATE_PROBE_TEST_LOG}"
+    then
+        printf 'Update probe did not select a %s runner correctly.\n' "${expected}" >&2
+        exit 1
+    fi
+done
+
+: > "${UPDATE_PROBE_TEST_LOG}"
+export TEST_SEED_AVAILABLE=false
+output=$("${self_dir}/update-images" --probe)
+if [[ ${output} != *'reaveros_probe_runner_size=large'* ]] \
+    || grep --fixed-strings --quiet 'run --rm' "${UPDATE_PROBE_TEST_LOG}"
+then
+    printf 'A missing seed did not select a large runner.\n' >&2
+    exit 1
+fi
+
+: > "${UPDATE_PROBE_TEST_LOG}"
+export TEST_PRODUCTION_LATEST_AVAILABLE=true
+export TEST_LLVM_REBUILD=false
+output=$("${self_dir}/update-images" --probe)
+if [[ ${output} != *'reaveros_probe_runner_size=medium'* ]] \
+    || ! grep --fixed-strings --quiet \
+        'pull example.invalid/reaveros-unpruned:latest' "${UPDATE_PROBE_TEST_LOG}"
+then
+    printf 'The production latest image was not used as a compatible seed.\n' >&2
+    exit 1
+fi
+
+printf 'Image-update probe tests passed.\n'

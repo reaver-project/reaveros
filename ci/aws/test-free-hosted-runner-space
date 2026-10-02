@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $(basename -- "$0") == sudo ]]
+then
+    printf '%s\n' "$*" >> "${CLEANUP_TEST_LOG}"
+    exit 0
+fi
+
+self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+test_directory=$(mktemp -d)
+trap 'rm -r -- "${test_directory}"' EXIT
+
+if RUNNER_ENVIRONMENT=self-hosted RUNNER_OS=Linux \
+    "${self_dir}/free-hosted-runner-space" >/dev/null 2>&1
+then
+    printf 'Cleanup accepted a self-hosted runner.\n' >&2
+    exit 1
+fi
+
+mkdir "${test_directory}/bin"
+ln -s "${self_dir}/test-free-hosted-runner-space" "${test_directory}/bin/sudo"
+export CLEANUP_TEST_LOG="${test_directory}/sudo-calls"
+export PATH="${test_directory}/bin:${PATH}"
+: > "${CLEANUP_TEST_LOG}"
+expected_targets=$'/usr/local/lib/android/sdk\n/usr/share/dotnet\n/usr/local/.ghcup\n/opt/ghc'
+if [[ $("${self_dir}/free-hosted-runner-space" --list) != "${expected_targets}" ]]
+then
+    printf 'Cleanup target list changed unexpectedly.\n' >&2
+    exit 1
+fi
+RUNNER_ENVIRONMENT=github-hosted RUNNER_OS=Linux \
+    "${self_dir}/free-hosted-runner-space" >/dev/null
+
+while IFS= read -r invocation
+do
+    [[ ${invocation} == rm\ -rf\ --one-file-system\ --\ * ]] || continue
+    case ${invocation#rm -rf --one-file-system -- } in
+        /usr/local/lib/android/sdk | /usr/share/dotnet | /usr/local/.ghcup | /opt/ghc) ;;
+        *)
+            printf 'Cleanup attempted an unexpected deletion: %s\n' "${invocation}" >&2
+            exit 1
+            ;;
+    esac
+done < "${CLEANUP_TEST_LOG}"
+
+printf 'Hosted-runner cleanup tests passed.\n'

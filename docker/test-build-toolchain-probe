@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+case $(basename -- "$0") in
+    cmake)
+        exit 0
+        ;;
+    make)
+        [[ $1 == --dry-run && $2 == --no-print-directory ]]
+        if [[ $3 == toolchain-llvm && ${TEST_LLVM_REBUILD} == true ]]
+        then
+            printf "Performing build step for 'toolchain-llvm'\n"
+        fi
+        exit 0
+        ;;
+esac
+
+self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+test_directory=$(mktemp -d)
+trap 'rm -r -- "${test_directory}"' EXIT
+mkdir "${test_directory}/bin" "${test_directory}/build"
+ln -s "${self_dir}/test-build-toolchain-probe" "${test_directory}/bin/cmake"
+ln -s "${self_dir}/test-build-toolchain-probe" "${test_directory}/bin/make"
+export PATH="${test_directory}/bin:${PATH}"
+export REAVEROS_BUILD_DIRECTORY="${test_directory}/build"
+export REAVEROS_SOURCE_DIRECTORY="${test_directory}"
+
+for expected in false true
+do
+    export TEST_LLVM_REBUILD=${expected}
+    output=$("${self_dir}/build-toolchain" --probe)
+    if [[ ${output} != *"reaveros_llvm_rebuild=${expected}"* ]]
+    then
+        printf 'Toolchain probe did not report LLVM rebuild %s.\n' "${expected}" >&2
+        exit 1
+    fi
+done
+
+printf 'Toolchain rebuild probe tests passed.\n'
