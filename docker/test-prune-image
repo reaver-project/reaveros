@@ -37,4 +37,12 @@ if ! grep --fixed-strings --line-regexp --quiet \
     exit 1
 fi
 
+if ! grep --fixed-strings --line-regexp --quiet \
+    'LABEL org.opencontainers.image.source=https://github.com/reaver-project/reaveros' \
+    "${PRUNE_TEST_LOG}"
+then
+    printf 'The pruned image lacks the ReaverOS source label.\n' >&2
+    exit 1
+fi
+
 printf 'Build-environment pruning tests passed.\n'

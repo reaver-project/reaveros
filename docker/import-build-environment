@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $# -ne 1 ]]
+then
+    printf 'usage: %s <image>\n' "$0" >&2
+    exit 2
+fi
+
+docker import \
+    --change 'CMD ["/usr/bin/env", "bash"]' \
+    --change 'LABEL org.opencontainers.image.source=https://github.com/reaver-project/reaveros' \
+    - "$1"
