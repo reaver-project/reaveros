@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if invalid_output=$(MATRIX_JOB='{"invoke":"../../unexpected"}' \
+    ./ci/aws/run-matrix-job 2>&1)
+then
+    printf 'Matrix invocation accepted a path outside ci/jobs.\n' >&2
+    exit 1
+fi
+if [[ ${invalid_output} != *'Invalid matrix job invocation'* ]]
+then
+    printf 'Matrix invocation failed for the wrong reason.\n' >&2
+    exit 1
+fi
+
+job='{"invoke":"boot-smoke","tags":{"architecture":"amd64","loader":"uefi","layout":"efipart","firmware":"other","machine":"q35"}}'
+if invalid_output=$(MATRIX_JOB="${job}" ./ci/aws/run-matrix-job 2>&1)
+then
+    printf 'Boot smoke accepted an unsupported firmware.\n' >&2
+    exit 1
+fi
+if [[ ${invalid_output} != *'No boot-smoke implementation'* ]]
+then
+    printf 'Boot smoke failed before dispatching its job script.\n' >&2
+    exit 1
+fi
+
+printf 'Matrix job dispatch tests passed.\n'

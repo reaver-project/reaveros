@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $# -ne 1 || -z ${BUILD_ENVIRONMENT_IMAGE:-} ]]
+then
+    printf 'usage: %s <compiled job> (with BUILD_ENVIRONMENT_IMAGE)\n' "$0" >&2
+    exit 2
+fi
+
+architecture=$(jq --exit-status --raw-output '.tags.architecture' <<< "$1")
+exec ./ci/run-unit-tests "${architecture}" "${BUILD_ENVIRONMENT_IMAGE}"
