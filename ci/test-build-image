@@ -26,7 +26,7 @@ export PATH="${test_directory}/bin:${PATH}"
 
 cd "${repo_root}"
 "${self_dir}/build-image" \
-    uefi-efipart-amd64 \
+    amd64 uefi efipart \
     example.invalid/reaveros-build-env:test \
     "${artifact_directory}"
 
@@ -37,6 +37,17 @@ then
     printf 'The image artifact directory was not mounted by absolute path.\n' >&2
     exit 1
 fi
+
+for required_argument in \
+    '-DREAVEROS_ARCHITECTURES="${architecture}"' \
+    '-DREAVEROS_LOADERS="${loader}"'
+do
+    if ! grep --fixed-strings --quiet -- "${required_argument}" "${BUILD_IMAGE_TEST_LOG}"
+    then
+        printf 'The image build did not configure %s.\n' "${required_argument}" >&2
+        exit 1
+    fi
+done
 
 "${repo_root}/docker/test-build-image"
 "${repo_root}/docker/test-prune-image"

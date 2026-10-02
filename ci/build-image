@@ -2,20 +2,25 @@
 
 set -euo pipefail
 
-if [[ $# -ne 3 ]]
+if [[ $# -ne 5 ]]
 then
-    printf 'usage: %s <image> <build-environment image> <artifact directory>\n' "$0" >&2
+    printf 'usage: %s <architecture> <loader> <layout> <build-environment image> <artifact directory>\n' "$0" >&2
     exit 2
 fi
 
-image=$1
-build_environment=$2
-artifact_dir=$3
+architecture=$1
+loader=$2
+layout=$3
+build_environment=$4
+artifact_dir=$5
+image=${loader}-${layout}-${architecture}
 repo_root=$(git rev-parse --show-toplevel)
 
-if [[ ! ${image} =~ ^[a-z0-9-]+$ ]]
+if [[ ! ${architecture} =~ ^[a-z0-9-]+$ || ! ${loader} =~ ^[a-z0-9-]+$ ||
+    ! ${layout} =~ ^[a-z0-9-]+$ ]]
 then
-    printf 'Invalid image name: %s\n' "${image}" >&2
+    printf 'Invalid image coordinates: %s %s %s\n' \
+        "${architecture}" "${loader}" "${layout}" >&2
     exit 2
 fi
 
@@ -27,9 +32,13 @@ docker run --rm \
     "${build_environment}" \
     /usr/bin/env bash -c '
         set -euo pipefail
-        image=$1
+        architecture=$1
+        loader=$2
+        image=$3
         cd /build
-        cmake /reaveros -DREAVEROS_ENABLE_UNIT_TESTS=ON
+        cmake /reaveros -DREAVEROS_ENABLE_UNIT_TESTS=ON \
+            -DREAVEROS_ARCHITECTURES="${architecture}" \
+            -DREAVEROS_LOADERS="${loader}"
         make "image-${image}" -j"$(nproc)"
         cp "install/images/${image}.img" /artifacts/
-    ' -- "${image}"
+    ' -- "${architecture}" "${loader}" "${image}"
