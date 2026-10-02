@@ -219,99 +219,56 @@ jobs:
           - name: Test the candidate CI configuration
             run: |
                 python3 -m unittest discover -s ci/matrix -p 'test_*.py'
+                ./ci/aws/test-free-hosted-runner-space
                 ./ci/aws/test-run-matrix-job
+                ./ci/aws/test-select-build-environment
                 ./ci/aws/test-workflows
+                ./docker/test-build-toolchain-probe
+                ./docker/test-update-images-probe
                 ./ci/test-build-image
 
           - name: Compile the requested matrix
             id: matrix
             run: python3 ci/matrix/compile.py ci/matrix.yaml --workflow ci
 
-    build-environment:
-        name: Prepare build environment (medium)
+    select-build-environment:
+        name: Select build environment
         if: needs.authorize.outputs.approved == 'true'
         needs:
           - authorize
           - infrastructure-contract
-          - toolchain-update-state
+        permissions:
+            contents: read
+            id-token: write
+        uses: ./.github/workflows/aws-build-environment-selection.yml
+        with:
+            cache_tag: run-${{ github.run_id }}-${{ github.run_attempt }}
+            refresh_cache: ${{ needs.authorize.outputs.refresh_cache == 'true' }}
+
+    build-environment:
+        name: Prepare build environment (${{ needs.select-build-environment.outputs.runner_size }})
+        if: ${{ !cancelled() && needs.authorize.outputs.approved == 'true' && needs.select-build-environment.result == 'success' && needs.select-build-environment.outputs.mode == 'build' && needs.build-matrix.result == 'success' }}
+        needs:
+          - authorize
           - build-matrix
+          - select-build-environment
         permissions:
             contents: read
         uses: ./.github/workflows/aws-runner.yml
         with:
-            cache_tag: run-${{ github.run_id }}-${{ github.run_attempt }}
-            defer_llvm: true
+            cache_tag: ${{ needs.select-build-environment.outputs.cache_tag }}
             refresh_cache: ${{ needs.authorize.outputs.refresh_cache == 'true' }}
-            runner_size: medium
+            runner_size: ${{ needs.select-build-environment.outputs.runner_size }}
             task: prepare
-
-    build-environment-large:
-        name: Rebuild build environment (large)
-        if: needs.build-environment.outputs.needs_large == 'true'
-        needs:
-          - authorize
-          - build-environment
-        permissions:
-            contents: read
-        uses: ./.github/workflows/aws-runner.yml
-        with:
-            cache_tag: run-${{ github.run_id }}-${{ github.run_attempt }}
-            refresh_cache: ${{ needs.authorize.outputs.refresh_cache == 'true' }}
-            runner_size: large
-            task: prepare
-
-    build-environment-ready:
-        name: Build environment ready
-        if: always() && needs.authorize.outputs.approved == 'true'
-        needs:
-          - authorize
-          - build-environment
-          - build-environment-large
-        runs-on: ubuntu-latest
-        timeout-minutes: 5
-        outputs:
-            cache_tag: ${{ steps.ready.outputs.cache_tag }}
-
-        steps:
-          - name: Check preparation result
-            id: ready
-            env:
-                CACHE_TAG: run-${{ github.run_id }}-${{ github.run_attempt }}
-                LARGE_READY: ${{ needs.build-environment-large.outputs.ready }}
-                LARGE_RESULT: ${{ needs.build-environment-large.result }}
-                MEDIUM_NEEDS_LARGE: ${{ needs.build-environment.outputs.needs_large }}
-                MEDIUM_READY: ${{ needs.build-environment.outputs.ready }}
-                MEDIUM_RESULT: ${{ needs.build-environment.result }}
-            run: |
-                set -euo pipefail
-                if [[ ${MEDIUM_RESULT} != success ]]
-                then
-                    printf '::error::Medium build-environment preparation finished with %s.\n' "${MEDIUM_RESULT}"
-                    exit 1
-                fi
-
-                if [[ ${MEDIUM_NEEDS_LARGE} == true ]]
-                then
-                    if [[ ${LARGE_RESULT} != success || ${LARGE_READY} != true ]]
-                    then
-                        printf '::error::Large build-environment preparation finished with %s.\n' "${LARGE_RESULT}"
-                        exit 1
-                    fi
-                elif [[ ${MEDIUM_READY} != true ]]
-                then
-                    printf '::error::Medium preparation did not produce a build environment.\n'
-                    exit 1
-                fi
-
-                printf 'cache_tag=%s\n' "${CACHE_TAG}" >> "${GITHUB_OUTPUT}"
 
     dispatch-standalone:
         name: ${{ matrix.name }}
-        if: ${{ !cancelled() && needs.authorize.outputs.approved == 'true' && needs.build-environment-ready.result == 'success' && needs.build-matrix.outputs.has_standalone == 'true' }}
+        if: ${{ !cancelled() && needs.authorize.outputs.approved == 'true' && needs.build-matrix.result == 'success' && needs.select-build-environment.result == 'success' && (needs.select-build-environment.outputs.mode == 'reuse' || (needs.build-environment.result == 'success' && needs.build-environment.outputs.ready == 'true')) && needs.build-matrix.outputs.has_standalone == 'true' }}
         needs:
           - authorize
           - build-matrix
-          - build-environment-ready
+          - select-build-environment
+          - build-environment
         permissions:
             contents: read
         strategy:
@@ -319,17 +276,18 @@ jobs:
             matrix: ${{ fromJSON(needs.build-matrix.outputs.standalone) }}
         uses: ./.github/workflows/aws-runner.yml
         with:
-            cache_tag: ${{ needs.build-environment-ready.outputs.cache_tag }}
+            cache_tag: ${{ needs.select-build-environment.outputs.cache_tag }}
             job_matrix: ${{ toJSON(matrix.job_matrix) }}
             task: dispatch
 
     dispatch-producers:
         name: ${{ matrix.name }}
-        if: ${{ !cancelled() && needs.authorize.outputs.approved == 'true' && needs.build-environment-ready.result == 'success' && needs.build-matrix.outputs.has_producer == 'true' }}
+        if: ${{ !cancelled() && needs.authorize.outputs.approved == 'true' && needs.build-matrix.result == 'success' && needs.select-build-environment.result == 'success' && (needs.select-build-environment.outputs.mode == 'reuse' || (needs.build-environment.result == 'success' && needs.build-environment.outputs.ready == 'true')) && needs.build-matrix.outputs.has_producer == 'true' }}
         needs:
           - authorize
           - build-matrix
-          - build-environment-ready
+          - select-build-environment
+          - build-environment
         permissions:
             contents: read
         strategy:
@@ -337,17 +295,18 @@ jobs:
             matrix: ${{ fromJSON(needs.build-matrix.outputs.producer) }}
         uses: ./.github/workflows/aws-runner.yml
         with:
-            cache_tag: ${{ needs.build-environment-ready.outputs.cache_tag }}
+            cache_tag: ${{ needs.select-build-environment.outputs.cache_tag }}
             job_matrix: ${{ toJSON(matrix.job_matrix) }}
             task: dispatch
 
     dispatch-consumers:
         name: ${{ matrix.name }}
-        if: ${{ !cancelled() && needs.authorize.outputs.approved == 'true' && needs.build-environment-ready.result == 'success' && needs.dispatch-producers.result == 'success' && needs.build-matrix.outputs.has_consumer == 'true' }}
+        if: ${{ !cancelled() && needs.authorize.outputs.approved == 'true' && needs.build-matrix.result == 'success' && needs.select-build-environment.result == 'success' && (needs.select-build-environment.outputs.mode == 'reuse' || (needs.build-environment.result == 'success' && needs.build-environment.outputs.ready == 'true')) && needs.dispatch-producers.result == 'success' && needs.build-matrix.outputs.has_consumer == 'true' }}
         needs:
           - authorize
           - build-matrix
-          - build-environment-ready
+          - select-build-environment
+          - build-environment
           - dispatch-producers
         permissions:
             contents: read
@@ -356,18 +315,18 @@ jobs:
             matrix: ${{ fromJSON(needs.build-matrix.outputs.consumer) }}
         uses: ./.github/workflows/aws-runner.yml
         with:
-            cache_tag: ${{ needs.build-environment-ready.outputs.cache_tag }}
+            cache_tag: ${{ needs.select-build-environment.outputs.cache_tag }}
             job_matrix: ${{ toJSON(matrix.job_matrix) }}
             task: dispatch
 
     promote-build-environment:
         name: Promote validated build environment
-        if: ${{ !cancelled() && needs.authorize.outputs.approved == 'true' && needs.build-environment-ready.result == 'success' && (needs.build-matrix.outputs.has_standalone != 'true' || needs.dispatch-standalone.result == 'success') && (needs.build-matrix.outputs.has_producer != 'true' || needs.dispatch-producers.result == 'success') && (needs.build-matrix.outputs.has_consumer != 'true' || needs.dispatch-consumers.result == 'success') }}
+        if: ${{ !cancelled() && needs.authorize.outputs.approved == 'true' && needs.build-matrix.result == 'success' && needs.select-build-environment.result == 'success' && (needs.select-build-environment.outputs.mode == 'reuse' || (needs.build-environment.result == 'success' && needs.build-environment.outputs.ready == 'true')) && (needs.build-matrix.outputs.has_standalone != 'true' || needs.dispatch-standalone.result == 'success') && (needs.build-matrix.outputs.has_producer != 'true' || needs.dispatch-producers.result == 'success') && (needs.build-matrix.outputs.has_consumer != 'true' || needs.dispatch-consumers.result == 'success') }}
         needs:
           - authorize
           - build-matrix
+          - select-build-environment
           - build-environment
-          - build-environment-ready
           - dispatch-standalone
           - dispatch-producers
           - dispatch-consumers
@@ -377,7 +336,7 @@ jobs:
         uses: ./.github/workflows/aws-cache-promotion.yml
         with:
             publish_cache: ${{ needs.authorize.outputs.publish_cache == 'true' }}
-            source_tag: ${{ needs.build-environment-ready.outputs.cache_tag }}
+            source_tag: ${{ needs.select-build-environment.outputs.cache_tag }}
 
     result:
         name: CI result
@@ -387,7 +346,8 @@ jobs:
           - infrastructure-contract
           - toolchain-update-state
           - build-matrix
-          - build-environment-ready
+          - select-build-environment
+          - build-environment
           - dispatch-standalone
           - dispatch-producers
           - dispatch-consumers
@@ -404,7 +364,10 @@ jobs:
                 HAS_STANDALONE: ${{ needs.build-matrix.outputs.has_standalone }}
                 CONSUMER_RESULT: ${{ needs.dispatch-consumers.result }}
                 STANDALONE_RESULT: ${{ needs.dispatch-standalone.result }}
-                BUILD_ENVIRONMENT_RESULT: ${{ needs.build-environment-ready.result }}
+                BUILD_ENVIRONMENT_RESULT: ${{ needs.build-environment.result }}
+                BUILD_ENVIRONMENT_READY: ${{ needs.build-environment.outputs.ready }}
+                SELECTION_MODE: ${{ needs.select-build-environment.outputs.mode }}
+                SELECTION_RESULT: ${{ needs.select-build-environment.result }}
                 PRODUCER_RESULT: ${{ needs.dispatch-producers.result }}
                 INFRASTRUCTURE_CONTRACT_RESULT: ${{ needs.infrastructure-contract.result }}
                 MATRIX_RESULT: ${{ needs.build-matrix.result }}
@@ -438,6 +401,36 @@ jobs:
                     exit 1
                 fi
 
+                if [[ ${SELECTION_RESULT} != success ]]
+                then
+                    printf '::error::Build-environment selection finished with %s.\n' \
+                        "${SELECTION_RESULT}"
+                    exit 1
+                fi
+                case ${SELECTION_MODE} in
+                    reuse)
+                        if [[ ${BUILD_ENVIRONMENT_RESULT} != skipped ]]
+                        then
+                            printf '::error::The cached environment unexpectedly started a builder.\n'
+                            exit 1
+                        fi
+                        ;;
+                    build)
+                        if [[ ${BUILD_ENVIRONMENT_RESULT} != success \
+                            || ${BUILD_ENVIRONMENT_READY} != true ]]
+                        then
+                            printf '::error::Build-environment preparation finished with %s (ready: %s).\n' \
+                                "${BUILD_ENVIRONMENT_RESULT}" "${BUILD_ENVIRONMENT_READY}"
+                            exit 1
+                        fi
+                        ;;
+                    *)
+                        printf '::error::The selector returned an unknown mode: %s.\n' \
+                            "${SELECTION_MODE}"
+                        exit 1
+                        ;;
+                esac
+
                 if [[ ${HAS_STANDALONE} != true ]]
                 then
                     STANDALONE_RESULT=success
@@ -452,7 +445,6 @@ jobs:
                 fi
 
                 for result in \
-                    "build environment:${BUILD_ENVIRONMENT_RESULT}" \
                     "standalone validation:${STANDALONE_RESULT}" \
                     "producer validation:${PRODUCER_RESULT}" \
                     "consumer validation:${CONSUMER_RESULT}" \

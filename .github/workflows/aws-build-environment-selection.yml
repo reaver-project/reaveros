@@ -1,0 +1,74 @@
+name: Select AWS build environment
+
+on:
+    workflow_call:
+        inputs:
+            cache_tag:
+                description: Per-run staging tag
+                required: true
+                type: string
+            refresh_cache:
+                description: Refresh the container operating system
+                default: false
+                required: false
+                type: boolean
+        outputs:
+            mode:
+                description: Reuse the exact cached pair or build a new pair
+                value: ${{ jobs.select.outputs.mode }}
+            runner_size:
+                description: Builder size selected for a cache miss
+                value: ${{ jobs.select.outputs.runner_size }}
+            cache_tag:
+                description: Staging tag used by validation
+                value: ${{ jobs.select.outputs.cache_tag }}
+
+permissions:
+    contents: read
+
+jobs:
+    select:
+        name: Check cached toolchain and select builder
+        runs-on: ubuntu-latest
+        timeout-minutes: 25
+        permissions:
+            contents: read
+            id-token: write
+        outputs:
+            mode: ${{ steps.selection.outputs.mode }}
+            runner_size: ${{ steps.selection.outputs.runner_size }}
+            cache_tag: ${{ steps.selection.outputs.cache_tag }}
+
+        steps:
+          - name: Check out the requested revision
+            uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+            with:
+                repository: ${{ github.repository }}
+                ref: ${{ github.sha }}
+                persist-credentials: false
+
+          - name: Test hosted build-environment selection
+            run: |
+                ./ci/aws/test-free-hosted-runner-space
+                ./ci/aws/test-select-build-environment
+                ./docker/test-build-toolchain-probe
+                ./docker/test-update-images-probe
+
+          - name: Read the AWS infrastructure contract
+            id: stack
+            uses: reaver-project/infrastructure/actions/aws-stack-contract@00b10c017659d5ca9cf45b1e44748e22d7a9b14e
+            with:
+                aws-region: ${{ vars.AWS_REGION }}
+                expected-contract-version: '5'
+                role-arn: ${{ vars.AWS_RUNNER_ROLE_ARN }}
+                role-session-name: reaveros-${{ github.run_id }}-select
+                stack-name: ${{ vars.AWS_RUNNER_STACK_NAME }}
+
+          - name: Select or prepare the build environment
+            id: selection
+            env:
+                AWS_REGION: ${{ vars.AWS_REGION }}
+                AWS_RUNNER_STACK_NAME: ${{ vars.AWS_RUNNER_STACK_NAME }}
+                CACHE_TAG: ${{ inputs.cache_tag }}
+                REFRESH_CACHE: ${{ inputs.refresh_cache }}
+            run: ./ci/aws/select-build-environment

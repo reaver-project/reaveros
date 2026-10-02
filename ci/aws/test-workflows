@@ -47,9 +47,9 @@ mapfile -t infrastructure_references < <(
         's/^[[:space:]]*uses:[[:space:]]*(reaver-project\/infrastructure\/actions\/[^[:space:]#]+).*/\1/p' \
         "${workflow_files[@]}"
 )
-if [[ ${#infrastructure_references[@]} -ne 3 ]]
+if [[ ${#infrastructure_references[@]} -ne 4 ]]
 then
-    printf 'Expected three shared infrastructure action uses, found %s.\n' \
+    printf 'Expected four shared infrastructure action uses, found %s.\n' \
         "${#infrastructure_references[@]}" >&2
     exit 1
 fi
@@ -64,6 +64,7 @@ do
 done
 
 for contract_consumer in \
+    "${repo_root}/.github/workflows/aws-build-environment-selection.yml" \
     "${repo_root}/.github/workflows/aws-cache-promotion.yml"
 do
     if ! grep --fixed-strings --quiet \
@@ -164,12 +165,12 @@ fi
 # GitHub expression syntax is intentionally literal in these invariants.
 # shellcheck disable=SC2016
 if [[ $(grep --fixed-strings --count \
-    'cache_tag: ${{ needs.build-environment-ready.outputs.cache_tag }}' \
-    "${ci_workflow}") -ne 3 ]] \
+    'cache_tag: ${{ needs.select-build-environment.outputs.cache_tag }}' \
+    "${ci_workflow}") -ne 4 ]] \
     || ! grep --fixed-strings --quiet \
-        'cache_tag: ${{ steps.ready.outputs.cache_tag }}' "${ci_workflow}" \
+        'cache_tag: run-${{ github.run_id }}-${{ github.run_attempt }}' "${ci_workflow}" \
     || ! grep --fixed-strings --quiet \
-        'source_tag: ${{ needs.build-environment-ready.outputs.cache_tag }}' \
+        'source_tag: ${{ needs.select-build-environment.outputs.cache_tag }}' \
         "${ci_workflow}"
 then
     printf 'Rerun jobs must use the tag produced by successful preparation.\n' >&2
@@ -200,15 +201,20 @@ do
     require_ci_condition "${validation_job}" \
         '!cancelled()' \
         "needs.authorize.outputs.approved == 'true'" \
-        "needs.build-environment-ready.result == 'success'"
+        "needs.select-build-environment.result == 'success'" \
+        "needs.select-build-environment.outputs.mode == 'reuse'" \
+        "needs.build-environment.outputs.ready == 'true'"
 done
 require_ci_condition dispatch-consumers \
     '!cancelled()' \
-    "needs.build-environment-ready.result == 'success'" \
+    "needs.select-build-environment.result == 'success'" \
+    "needs.build-environment.outputs.ready == 'true'" \
     "needs.dispatch-producers.result == 'success'"
 require_ci_condition promote-build-environment \
     '!cancelled()' \
-    "needs.build-environment-ready.result == 'success'" \
+    "needs.build-matrix.result == 'success'" \
+    "needs.select-build-environment.result == 'success'" \
+    "needs.build-environment.outputs.ready == 'true'" \
     "needs.build-matrix.outputs.has_standalone != 'true' || needs.dispatch-standalone.result == 'success'" \
     "needs.build-matrix.outputs.has_producer != 'true' || needs.dispatch-producers.result == 'success'" \
     "needs.build-matrix.outputs.has_consumer != 'true' || needs.dispatch-consumers.result == 'success'"
@@ -233,6 +239,7 @@ done
 
 for reusable_workflow in \
     "${repo_root}/.github/workflows/aws-runner.yml" \
+    "${repo_root}/.github/workflows/aws-build-environment-selection.yml" \
     "${repo_root}/.github/workflows/aws-cache-promotion.yml"
 do
     if grep --extended-regexp --quiet \
@@ -278,10 +285,31 @@ then
     printf 'Runner lifecycle or ECR output isolation regressed.\n' >&2
     exit 1
 fi
-if [[ $(grep --fixed-strings --count 'runner_size: large' "${ci_workflow}") -ne 1 ||
-    $(grep --fixed-strings --count 'runner_size: medium' "${ci_workflow}") -ne 1 ]]
+if [[ $(grep --fixed-strings --count \
+    'runner_size: ${{ needs.select-build-environment.outputs.runner_size }}' \
+    "${ci_workflow}") -ne 1 ]]
 then
-    printf 'Preparation runner classes are not uniquely identified.\n' >&2
+    printf 'The selected preparation runner class is not used.\n' >&2
+    exit 1
+fi
+
+selector_workflow="${repo_root}/.github/workflows/aws-build-environment-selection.yml"
+for selection_invariant in \
+    'run: ./ci/aws/select-build-environment' \
+    'id-token: write' \
+    'role-arn: ${{ vars.AWS_RUNNER_ROLE_ARN }}'
+do
+    if ! grep --fixed-strings --quiet "${selection_invariant}" "${selector_workflow}"
+    then
+        printf 'The hosted selector is missing %s.\n' "${selection_invariant}" >&2
+        exit 1
+    fi
+done
+if ! grep --fixed-strings --quiet \
+    '"${self_dir}/free-hosted-runner-space"' \
+    "${repo_root}/ci/aws/select-build-environment"
+then
+    printf 'The hosted selector does not free space before pulling a seed.\n' >&2
     exit 1
 fi
 
