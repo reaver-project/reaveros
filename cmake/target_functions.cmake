@@ -289,7 +289,15 @@ function(reaveros_add_ep_prune_target external_project)
 endfunction()
 
 function(reaveros_add_ep_fetch_tag_target external_project revision)
-    ExternalProject_Get_Property(${external_project} STAMP_DIR GIT_TAG)
+    ExternalProject_Get_Property(${external_project} STAMP_DIR GIT_TAG UPDATE_DISCONNECTED)
+
+    if (UPDATE_DISCONNECTED)
+        set(update_step update_disconnected)
+        set(patch_step patch_disconnected)
+    else()
+        set(update_step update)
+        set(patch_step patch)
+    endif()
 
     set(tag_dependency "${REAVEROS_BINARY_DIR}/toolchain/${external_project}-tag-inputs")
     set(tag_inputs "${GIT_TAG}:${revision}\n")
@@ -307,7 +315,7 @@ function(reaveros_add_ep_fetch_tag_target external_project revision)
         COMMAND bash ${REAVEROS_SOURCE_DIR}/toolchain/ensure-git-tag
             <SOURCE_DIR> ${GIT_TAG} ${revision}
         DEPENDEES download
-        DEPENDERS update patch configure build
+        DEPENDERS ${update_step} ${patch_step} configure build
         DEPENDS ${tag_dependency}
         EXCLUDE_FROM_MAIN TRUE
         INDEPENDENT TRUE

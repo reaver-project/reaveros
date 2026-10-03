@@ -66,7 +66,7 @@ cmake -S "${fixture_source}" -B "${fixture_build}" \
     -DREAVEROS_SOURCE_DIR="${fixture_source_root}" \
     -DTEST_REMOTE="file://${test_directory}/remote" \
     -DTEST_TAG=v1 -DTEST_REVISION="${first_revision}" > /dev/null
-cmake --build "${fixture_build}" --target example-install > /dev/null
+cmake --build "${fixture_build}" --target example-install --parallel 8 > /dev/null
 fixture_checkout="${fixture_build}/example-prefix/src/example"
 if [[ $(git -C "${fixture_checkout}" rev-parse HEAD) != "${first_revision}" ]]
 then
@@ -84,7 +84,7 @@ cmake -S "${fixture_source}" -B "${fixture_build}" \
     -DTEST_REMOTE="file://${test_directory}/remote" \
     -DTEST_TAG=v2 -DTEST_REVISION="${second_revision}" > /dev/null
 cmake --build "${fixture_build}" --target example-install -- -n > /dev/null
-cmake --build "${fixture_build}" --target example-install > /dev/null
+cmake --build "${fixture_build}" --target example-install --parallel 8 > /dev/null
 if [[ $(git -C "${fixture_checkout}" rev-parse HEAD) != "${second_revision}" ]]
 then
     printf 'Reconfiguring an existing build did not fetch its new tag.\n' >&2
