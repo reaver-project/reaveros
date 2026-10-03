@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include <memory>
+
 #include "chained_allocator.h"
 
 namespace kernel::util
