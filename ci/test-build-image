@@ -103,4 +103,48 @@ do
     fi
 done
 
+llvm_binary_directory="${prune_build_directory}/toolchain/toolchain-llvm-prefix/src/toolchain-llvm-build"
+llvm_identity_file="${prune_build_directory}/toolchain/toolchain-llvm-source-identity"
+llvm_revision=$(sed -nE 's/^set\(REAVEROS_LLVM_REVISION ([0-9a-f]{40})\)$/\1/p' \
+    "${repo_root}/toolchain/config.cmake")
+llvm_digest=$(sed -nE 's/^set\(REAVEROS_LLVM_SOURCE_SHA256 ([0-9a-f]{64})\)$/\1/p' \
+    "${repo_root}/toolchain/config.cmake")
+llvm_invalidator="${repo_root}/toolchain/invalidate-stale-llvm-build"
+bash "${llvm_invalidator}" "${prune_build_directory}" "${llvm_binary_directory}" \
+    "${llvm_revision}" "${llvm_digest}"
+if [[ $(<"${llvm_identity_file}") != "${llvm_revision}:${llvm_digest}" ]]
+then
+    printf 'The LLVM source identity was not recorded.\n' >&2
+    exit 1
+fi
+mkdir -p "${llvm_binary_directory}"
+touch "${llvm_binary_directory}/preserve-on-same-source"
+cmake -S "${repo_root}" -B "${prune_build_directory}" -DREAVEROS_ENABLE_UNIT_TESTS=ON >/dev/null
+if [[ ! -f ${llvm_binary_directory}/preserve-on-same-source ]]
+then
+    printf 'Configuring a probe discarded the cached LLVM binary directory.\n' >&2
+    exit 1
+fi
+bash "${llvm_invalidator}" "${prune_build_directory}" "${llvm_binary_directory}" \
+    "${llvm_revision}" "${llvm_digest}"
+if [[ ! -f ${llvm_binary_directory}/preserve-on-same-source ]]
+then
+    printf 'An unchanged LLVM source discarded its binary directory.\n' >&2
+    exit 1
+fi
+printf 'old source identity\n' > "${llvm_identity_file}"
+bash "${llvm_invalidator}" "${prune_build_directory}" "${llvm_binary_directory}" \
+    "${llvm_revision}" "${llvm_digest}"
+if [[ -e ${llvm_binary_directory}/preserve-on-same-source ]]
+then
+    printf 'A changed LLVM source retained stale build outputs.\n' >&2
+    exit 1
+fi
+if bash "${llvm_invalidator}" "${prune_build_directory}" "${prune_build_directory}" \
+    "${llvm_revision}" "${llvm_digest}" >/dev/null 2>&1
+then
+    printf 'The LLVM build invalidator accepted a broad target.\n' >&2
+    exit 1
+fi
+
 printf 'CI image-build tests passed.\n'

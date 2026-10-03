@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $# -ne 4 || ! $3 =~ ^[0-9a-f]{40}$ || ! $4 =~ ^[0-9a-f]{64}$ ]]
+then
+    printf 'usage: %s <build root> <LLVM binary directory> <revision> <archive digest>\n' "$0" >&2
+    exit 2
+fi
+
+build_root=$(realpath -m -- "$1")
+binary_directory=$(realpath -m -- "$2")
+expected_directory=${build_root}/toolchain/toolchain-llvm-prefix/src/toolchain-llvm-build
+if [[ ${build_root} == / || ${binary_directory} != "${expected_directory}" ]]
+then
+    printf 'Refusing to invalidate an unexpected LLVM binary directory: %s\n' "$2" >&2
+    exit 2
+fi
+
+identity_directory=${build_root}/toolchain
+identity_file=${identity_directory}/toolchain-llvm-source-identity
+if [[ -L ${identity_file} || ( -e ${identity_file} && ! -f ${identity_file} ) ]]
+then
+    printf 'The LLVM source identity path is not a regular file.\n' >&2
+    exit 2
+fi
+
+identity=$3:$4
+if [[ -f ${identity_file} && $(<"${identity_file}") == "${identity}" ]]
+then
+    exit 0
+fi
+
+# LLVM runtimes generate libc++ headers inside this tree. Reusing them after a
+# source change can compile new runtime sources against the previous release.
+if [[ -e ${binary_directory} || -L ${binary_directory} ]]
+then
+    rm -r -- "${binary_directory}"
+fi
+mkdir -p -- "${identity_directory}"
+printf '%s\n' "${identity}" > "${identity_file}"

@@ -126,6 +126,9 @@ ExternalProject_Add_Step(toolchain-llvm
     COMMAND bash ${REAVEROS_SOURCE_DIR}/toolchain/hydrate-git-archive
         <SOURCE_DIR> ${REAVEROS_LLVM_REPO} ${REAVEROS_LLVM_TAG}
         ${REAVEROS_LLVM_REVISION} <DOWNLOADED_FILE>
+    COMMAND bash ${REAVEROS_SOURCE_DIR}/toolchain/invalidate-stale-llvm-build
+        "${REAVEROS_BINARY_DIR}" <BINARY_DIR>
+        ${REAVEROS_LLVM_REVISION} ${REAVEROS_LLVM_SOURCE_SHA256}
     DEPENDEES download update patch
     DEPENDERS configure
     DEPENDS ${patch_dependency}
@@ -147,8 +150,6 @@ reaveros_add_ep_prune_target(toolchain-llvm
 
 # install compiler-rt to the appropriate sysroots
 string(REGEX REPLACE "llvmorg-(([0-9]+)\.[0-9]+\.[0-9])+(-.*)?" "\\2" _llvm_version "${REAVEROS_LLVM_TAG}")
-ExternalProject_Get_Property(toolchain-llvm BINARY_DIR)
-
 foreach (architecture IN LISTS REAVEROS_ARCHITECTURES)
     foreach (mode IN ITEMS freestanding hosted)
         set(_sub_path "${_llvm_version}/lib/${_reaveros_${architecture}_${mode}_target}")
