@@ -1,0 +1,179 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $# -lt 3 || $# -gt 4 || ( $# -eq 4 && $4 != --request-only ) ]]
+then
+    printf 'usage: %s <repository root> <update branch> <base branch> [--request-only]\n' "$0" >&2
+    exit 2
+fi
+
+repo_root=$1
+update_branch=$2
+base_branch=$3
+request_only=${4:-}
+repo_slug=reaver-project/reaveros
+self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+source "${self_dir}/update-common.sh"
+
+if [[ ! ${update_branch} =~ ^maintenance/update/[a-z0-9-]+/[A-Za-z0-9._/-]+$ ]]
+then
+    printf 'Invalid maintenance branch: %s\n' "${update_branch}" >&2
+    exit 2
+fi
+if [[ $(git -C "${repo_root}" branch --show-current) != "${update_branch}" ]]
+then
+    printf 'Signed publication requires the prepared update branch checked out.\n' >&2
+    exit 1
+fi
+
+local_head=$(git -C "${repo_root}" rev-parse HEAD)
+base_revision=$(git -C "${repo_root}" rev-parse HEAD^)
+expected_base_revision=$(git -C "${repo_root}" rev-parse "${base_branch}")
+if [[ ${base_revision} != "${expected_base_revision}" ]]
+then
+    printf 'The prepared update must contain exactly one commit on the current %s.\n' \
+        "${base_branch}" >&2
+    exit 1
+fi
+# Patch files legitimately contain single-space context lines. Validate the
+# other permitted files here; patch contents are validated when applied.
+git -C "${repo_root}" diff --no-ext-diff --check "${base_revision}" "${local_head}" \
+    -- toolchain/config.cmake maintenance/update-state
+if git -C "${repo_root}" diff --no-ext-diff --quiet "${base_revision}" "${local_head}"
+then
+    printf 'The update commit has no file changes.\n' >&2
+    exit 1
+fi
+
+temp_directory=$(mktemp -d)
+temp_branch=
+temp_seeded=false
+cleanup()
+{
+    if [[ ${temp_seeded} == true ]]
+    then
+        git -C "${repo_root}" push origin --delete "${temp_branch}" >&2 \
+            || printf 'Could not remove temporary maintenance branch %s.\n' "${temp_branch}" >&2
+    fi
+    rm -rf "${temp_directory}"
+}
+trap cleanup EXIT
+
+changes_file=${temp_directory}/changes.jsonl
+: > "${changes_file}"
+while IFS= read -r -d '' status && IFS= read -r -d '' path
+do
+    case ${path} in
+        toolchain/config.cmake|maintenance/update-state/*.state|toolchain/*/patches/*.patch) ;;
+        *) printf 'Refusing an unrelated maintenance path: %s\n' "${path}" >&2; exit 1 ;;
+    esac
+
+    case ${status} in
+        A|M|T)
+            contents=$(git -C "${repo_root}" show "${local_head}:${path}" | base64 --wrap=0)
+            jq --null-input --compact-output \
+                --arg path "${path}" \
+                --arg contents "${contents}" \
+                '{kind: "addition", path: $path, contents: $contents}' \
+                >> "${changes_file}"
+            ;;
+        D)
+            jq --null-input --compact-output \
+                --arg path "${path}" \
+                '{kind: "deletion", path: $path}' \
+                >> "${changes_file}"
+            ;;
+        *) printf 'Unsupported maintenance change status: %s\n' "${status}" >&2; exit 1 ;;
+    esac
+done < <(git -C "${repo_root}" diff --no-ext-diff --no-renames --name-status -z \
+    "${base_revision}" "${local_head}")
+
+headline=$(git -C "${repo_root}" log -1 --format=%s)
+body=$(git -C "${repo_root}" log -1 --format=%b)
+request_file=${temp_directory}/request.json
+jq --null-input \
+    --arg repo "${repo_slug}" \
+    --arg ref "${update_branch}" \
+    --arg parent "${base_revision}" \
+    --arg headline "${headline}" \
+    --arg body "${body}" \
+    --slurpfile changes "${changes_file}" \
+    '{
+        query: "mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid } } }",
+        variables: {
+            input: {
+                branch: {repositoryNameWithOwner: $repo, branchName: $ref},
+                expectedHeadOid: $parent,
+                message: {headline: $headline, body: $body},
+                fileChanges: {
+                    additions: [$changes[] | select(.kind == "addition") | {path, contents}],
+                    deletions: [$changes[] | select(.kind == "deletion") | {path}]
+                }
+            }
+        }
+    }' > "${request_file}"
+
+if [[ ${request_only} == --request-only ]]
+then
+    jq . "${request_file}"
+    exit
+fi
+
+update_require_gh
+if ! update_is_known_reaveros_remote "${repo_root}"
+then
+    printf 'Refusing to publish to an unrecognized repository remote.\n' >&2
+    exit 1
+fi
+app_slug=${REAVEROS_MAINTENANCE_APP_SLUG:-}
+if [[ ! ${app_slug} =~ ^[a-z0-9]+(-[a-z0-9]+)*$ || -z ${GH_TOKEN:-} ]]
+then
+    printf 'A maintenance App slug and token are required for signed publication.\n' >&2
+    exit 1
+fi
+
+temp_branch="maintenance/publish/$(date +%s)-${RANDOM}-${RANDOM}"
+git -C "${repo_root}" push origin \
+    "${base_revision}:refs/heads/${temp_branch}" >&2
+temp_seeded=true
+jq --arg ref "${temp_branch}" \
+    '.variables.input.branch.branchName = $ref' \
+    "${request_file}" > "${temp_directory}/publish.json"
+response=$(gh api graphql --input "${temp_directory}/publish.json")
+signed_revision=$(jq --raw-output \
+    '.data.createCommitOnBranch.commit.oid // empty' <<< "${response}")
+if [[ ! ${signed_revision} =~ ^[0-9a-f]{40}$ ]]
+then
+    jq '.errors // "Signed commit creation returned no revision."' <<< "${response}" >&2
+    exit 1
+fi
+
+commit_metadata=$(gh api "repos/${repo_slug}/commits/${signed_revision}")
+if ! jq --exit-status --arg actor "${app_slug}[bot]" \
+    '.commit.verification.verified == true and .author.login == $actor' \
+    <<< "${commit_metadata}" > /dev/null
+then
+    printf 'The maintenance commit is not verified as the expected App bot.\n' >&2
+    exit 1
+fi
+
+git -C "${repo_root}" fetch --no-tags origin "${temp_branch}" >&2
+if [[ $(git -C "${repo_root}" rev-parse FETCH_HEAD) != ${signed_revision} ]] \
+    || ! git -C "${repo_root}" diff --no-ext-diff --quiet "${local_head}" "${signed_revision}"
+then
+    printf 'The signed commit differs from the reviewed local update.\n' >&2
+    exit 1
+fi
+
+remote_revision=$(git -C "${repo_root}" ls-remote --heads origin \
+    "refs/heads/${update_branch}" | cut -f1)
+git -C "${repo_root}" push \
+    --force-with-lease="refs/heads/${update_branch}:${remote_revision}" \
+    origin "${signed_revision}:refs/heads/${update_branch}" >&2
+# The signed commit has the same tree as the reviewed local commit. Advance the
+# checked-out branch too, so a later continuation cannot inherit an unsigned
+# parent from the local preparation commit.
+git -C "${repo_root}" update-ref \
+    "refs/heads/${update_branch}" "${signed_revision}" "${local_head}"
+printf '%s\n' "${signed_revision}"
