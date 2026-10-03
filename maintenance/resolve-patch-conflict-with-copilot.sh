@@ -166,7 +166,7 @@ copilot_args=(
     --no-remote
     --disable-builtin-mcps
     --disallow-temp-dir
-    --available-tools='edit,view,grep,glob'
+    --available-tools='apply_patch,edit,view,grep,glob'
     --allow-tool='read'
 )
 

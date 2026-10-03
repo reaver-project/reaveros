@@ -422,6 +422,9 @@ git -C "${fixture}" -c commit.gpgsign=false commit --no-gpg-sign --quiet -m 'Pin
 
 cat > "${test_directory}/bin/copilot" <<'EOF'
 #!/usr/bin/env bash
+patch_tool_available=false
+conflicted_write_allowed=false
+expected_write="--allow-tool=write($(pwd -P)/version)"
 for argument in "$@"
 do
     case ${argument} in
@@ -429,8 +432,27 @@ do
             printf 'The resolver granted shell access.\n' >&2
             exit 1
             ;;
+        --available-tools=*)
+            if [[ ,${argument#*=}, == *,apply_patch,* ]]
+            then
+                patch_tool_available=true
+            fi
+            ;;
+        --allow-tool=write\(*)
+            if [[ ${argument} != "${expected_write}" ]]
+            then
+                printf 'The resolver granted an unrelated file write.\n' >&2
+                exit 1
+            fi
+            conflicted_write_allowed=true
+            ;;
     esac
 done
+if [[ ${patch_tool_available} != true || ${conflicted_write_allowed} != true ]]
+then
+    printf 'The resolver did not permit patching its conflicted file.\n' >&2
+    exit 1
+fi
 while [[ $# -gt 0 ]]
 do
     if [[ $1 == -p ]]
