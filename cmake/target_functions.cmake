@@ -238,7 +238,7 @@ function(reaveros_patch_dependency output_file external_project source_revision)
 endfunction()
 
 function(reaveros_add_ep_prune_target external_project)
-    ExternalProject_Get_Property(${external_project} STAMP_DIR)
+    ExternalProject_Get_Property(${external_project} STAMP_DIR UPDATE_DISCONNECTED)
 
     cmake_parse_arguments(prune "REMOVE_DOWNLOADED_ARCHIVE" "SOURCE_STEP" "" ${ARGN})
     if (prune_UNPARSED_ARGUMENTS)
@@ -260,6 +260,14 @@ function(reaveros_add_ep_prune_target external_project)
         COMMAND rm -rf <SOURCE_DIR> <BINARY_DIR>
         COMMAND rm -rf ${STAMP_DIR}/${external_project}-gitclone-lastrun.txt
         COMMAND touch ${STAMP_DIR}/${external_project}-${source_step}
+    )
+    if (UPDATE_DISCONNECTED)
+        list(APPEND _commands
+            COMMAND touch ${STAMP_DIR}/${external_project}-update_disconnected
+            COMMAND touch ${STAMP_DIR}/${external_project}-patch_disconnected
+        )
+    endif()
+    list(APPEND _commands
         COMMAND touch ${STAMP_DIR}/${external_project}-skip-update
         COMMAND touch ${STAMP_DIR}/${external_project}-patch
         COMMAND touch ${STAMP_DIR}/${external_project}-apply-patches

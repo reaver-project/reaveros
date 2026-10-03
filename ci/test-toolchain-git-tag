@@ -98,4 +98,18 @@ then
     exit 1
 fi
 
+cmake --build "${fixture_build}" --target example-prune > /dev/null
+cmake -S "${fixture_source}" -B "${fixture_build}" \
+    -DREAVEROS_SOURCE_DIR="${fixture_source_root}" \
+    -DTEST_REMOTE="file://${test_directory}/remote" \
+    -DTEST_TAG=v2 -DTEST_REVISION="${second_revision}" > /dev/null
+pruned_probe=$(cmake --build "${fixture_build}" --target example-install -- -n)
+if grep --extended-regexp --quiet \
+    'Performing (set-to-tag|disconnected update|disconnected patch|configure|build|install) step' \
+    <<< "${pruned_probe}"
+then
+    printf 'A pruned validation image tried to rebuild its absent Git checkout.\n' >&2
+    exit 1
+fi
+
 printf 'Toolchain Git tag tests passed.\n'
