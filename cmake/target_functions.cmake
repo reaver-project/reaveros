@@ -317,7 +317,8 @@ function(reaveros_add_ep_source_identity_step external_project identity)
     ExternalProject_Add_Step(${external_project}
         invalidate-build
         COMMAND bash ${REAVEROS_SOURCE_DIR}/toolchain/invalidate-stale-build
-            "${REAVEROS_BINARY_DIR}" ${external_project} <BINARY_DIR> "${identity}"
+            "${REAVEROS_BINARY_DIR}" ${external_project}
+            <BINARY_DIR> <INSTALL_DIR> "${identity}"
         DEPENDEES ${source_DEPENDEES}
         DEPENDERS configure
         DEPENDS ${dependency}

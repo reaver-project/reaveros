@@ -121,10 +121,11 @@ invalidator="${repo_root}/toolchain/invalidate-stale-build"
 for project in toolchain-cmake toolchain-dosfstools toolchain-mtools toolchain-llvm
 do
     binary_directory="${prune_build_directory}/toolchain/${project}-prefix/src/${project}-build"
+    install_directory="${prune_build_directory}/install/toolchain/${project#toolchain-}"
     identity_file="${prune_build_directory}/toolchain/${project}-source-identity"
     identity=$(<"${prune_build_directory}/toolchain/${project}-source-inputs")
     bash "${invalidator}" "${prune_build_directory}" "${project}" \
-        "${binary_directory}" "${identity}"
+        "${binary_directory}" "${install_directory}" "${identity}"
     if [[ $(<"${identity_file}") != "${identity}" ]]
     then
         printf 'The %s source identity was not recorded.\n' "${project}" >&2
@@ -132,49 +133,62 @@ do
     fi
     mkdir -p "${binary_directory}"
     touch "${binary_directory}/preserve-on-same-source"
+    touch "${install_directory}/preserve-on-same-source"
 done
 cmake -S "${repo_root}" -B "${prune_build_directory}" -DREAVEROS_ENABLE_UNIT_TESTS=ON >/dev/null
 for project in toolchain-cmake toolchain-dosfstools toolchain-mtools toolchain-llvm
 do
     binary_directory="${prune_build_directory}/toolchain/${project}-prefix/src/${project}-build"
+    install_directory="${prune_build_directory}/install/toolchain/${project#toolchain-}"
     identity_file="${prune_build_directory}/toolchain/${project}-source-identity"
     identity=$(<"${prune_build_directory}/toolchain/${project}-source-inputs")
-    if [[ ! -f ${binary_directory}/preserve-on-same-source ]]
+    if [[ ! -f ${binary_directory}/preserve-on-same-source \
+        || ! -f ${install_directory}/preserve-on-same-source ]]
     then
         printf 'Configuring a probe discarded the cached %s build.\n' "${project}" >&2
         exit 1
     fi
     bash "${invalidator}" "${prune_build_directory}" "${project}" \
-        "${binary_directory}" "${identity}"
-    if [[ ! -f ${binary_directory}/preserve-on-same-source ]]
+        "${binary_directory}" "${install_directory}" "${identity}"
+    if [[ ! -f ${binary_directory}/preserve-on-same-source \
+        || ! -f ${install_directory}/preserve-on-same-source ]]
     then
         printf 'An unchanged %s source discarded its binary directory.\n' "${project}" >&2
         exit 1
     fi
     printf 'old source identity\n' > "${identity_file}"
     bash "${invalidator}" "${prune_build_directory}" "${project}" \
-        "${binary_directory}" "${identity}"
+        "${binary_directory}" "${install_directory}" "${identity}"
     if [[ -e ${binary_directory}/preserve-on-same-source \
-        || ! -d ${binary_directory} ]]
+        || ! -d ${binary_directory} \
+        || -e ${install_directory}/preserve-on-same-source \
+        || ! -d ${install_directory} ]]
     then
-        printf 'A changed %s source retained stale outputs or removed its build directory.\n' \
+        printf 'A changed %s source retained stale outputs or removed its directories.\n' \
             "${project}" >&2
         exit 1
     fi
     rmdir "${binary_directory}"
+    rmdir "${install_directory}"
     bash "${invalidator}" "${prune_build_directory}" "${project}" \
-        "${binary_directory}" "${identity}"
-    if [[ ! -d ${binary_directory} ]]
+        "${binary_directory}" "${install_directory}" "${identity}"
+    if [[ ! -d ${binary_directory} || ! -d ${install_directory} ]]
     then
-        printf 'An unchanged %s source did not restore its pruned build directory.\n' \
+        printf 'An unchanged %s source did not restore its build directories.\n' \
             "${project}" >&2
         exit 1
     fi
 done
 if bash "${invalidator}" "${prune_build_directory}" toolchain-llvm \
-    "${prune_build_directory}" "${identity}" >/dev/null 2>&1
+    "${prune_build_directory}" "${install_directory}" "${identity}" >/dev/null 2>&1
 then
     printf 'The toolchain build invalidator accepted a broad target.\n' >&2
+    exit 1
+fi
+if bash "${invalidator}" "${prune_build_directory}" toolchain-llvm \
+    "${binary_directory}" "${prune_build_directory}" "${identity}" >/dev/null 2>&1
+then
+    printf 'The toolchain build invalidator accepted a broad install target.\n' >&2
     exit 1
 fi
 
