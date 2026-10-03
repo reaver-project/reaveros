@@ -1,0 +1,804 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+export GIT_AUTHOR_NAME='Maintenance test'
+export GIT_AUTHOR_EMAIL='maintenance-test@example.invalid'
+export GIT_COMMITTER_NAME='Maintenance test'
+export GIT_COMMITTER_EMAIL='maintenance-test@example.invalid'
+
+self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+test_directory=$(mktemp -d)
+trap 'rm -rf "${test_directory}"' EXIT
+
+fixture=${test_directory}/reaveros
+mkdir -p "${fixture}/maintenance" "${fixture}/toolchain" "${test_directory}/bin"
+cp "${self_dir}/update-common.sh" \
+   "${self_dir}/publish-signed-update" \
+   "${self_dir}/resolve-patch-conflict-with-copilot.sh" \
+   "${self_dir}/update-git.sh" \
+   "${self_dir}/update-mtools.sh" \
+   "${self_dir}/update-toolchain" \
+   "${fixture}/maintenance/"
+git init --quiet --initial-branch=main "${fixture}"
+git -C "${fixture}" remote add origin https://example.invalid/reaveros.git
+
+cat > "${fixture}/toolchain/config.cmake" <<'EOF'
+set(REAVEROS_CMAKE_REPO https://example.invalid/cmake)
+set(REAVEROS_CMAKE_TAG v1.0.0)
+set(REAVEROS_CMAKE_REVISION aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)
+set(REAVEROS_CMAKE_PATTERN v[0-9]+\.[0-9]+\.[0-9]+)
+set(REAVEROS_CMAKE_EXCLUDE "")
+set(REAVEROS_LLVM_REPO https://example.invalid/llvm)
+set(REAVEROS_LLVM_TAG llvmorg-21.1.8)
+set(REAVEROS_LLVM_REVISION cccccccccccccccccccccccccccccccccccccccc)
+set(REAVEROS_LLVM_SOURCE_SHA256 eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee)
+set(REAVEROS_LLVM_PATTERN llvmorg-[0-9]+\.[0-9]+\.[0-9]+)
+set(REAVEROS_LLVM_EXCLUDE llvmorg-.*-init)
+set(REAVEROS_DOSFSTOOLS_REPO https://example.invalid/dosfstools)
+set(REAVEROS_DOSFSTOOLS_TAG v2.0)
+set(REAVEROS_DOSFSTOOLS_REVISION ffffffffffffffffffffffffffffffffffffffff)
+set(REAVEROS_DOSFSTOOLS_PATTERN v[0-9]+\.[0-9]+)
+set(REAVEROS_DOSFSTOOLS_EXCLUDE "")
+set(REAVEROS_MTOOLS_DIR https://example.invalid/mtools)
+set(REAVEROS_MTOOLS_VER mtools-4.0.49.tar.gz)
+set(REAVEROS_MTOOLS_SHA256 1111111111111111111111111111111111111111111111111111111111111111)
+set(REAVEROS_MTOOLS_PATTERN mtools-[0-9]+\.[0-9]+\.[0-9]+\.tar\.gz)
+set(REAVEROS_MTOOLS_EXCLUDE "")
+EOF
+
+real_git=$(command -v git)
+cat > "${test_directory}/bin/git" <<'EOF'
+#!/usr/bin/env bash
+if [[ $1 == ls-remote && $2 == --tags ]]
+then
+    case $3 in
+        https://example.invalid/cmake)
+            printf '%s\t%s\n' \
+                aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa refs/tags/v1.0.0 \
+                bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb refs/tags/v1.1.0
+            ;;
+        https://example.invalid/llvm)
+            printf '%s\t%s\n' \
+                cccccccccccccccccccccccccccccccccccccccc refs/tags/llvmorg-21.1.8 \
+                dddddddddddddddddddddddddddddddddddddddd refs/tags/llvmorg-21.1.9
+            ;;
+        https://example.invalid/dosfstools)
+            printf '%s\t%s\n' \
+                ffffffffffffffffffffffffffffffffffffffff refs/tags/v2.0
+            ;;
+        *) exec "${REAL_GIT}" "$@" ;;
+    esac
+    exit
+fi
+exec "${REAL_GIT}" "$@"
+EOF
+cat > "${test_directory}/bin/curl" <<'EOF'
+#!/usr/bin/env bash
+for ((index = 1; index <= $#; index++))
+do
+    if [[ ${!index} == --output ]]
+    then
+        output_index=$((index + 1))
+        printf 'fixture archive' > "${!output_index}"
+        exit
+    fi
+done
+printf '%s\n' \
+    '<a href="mtools-4.0.49.tar.gz">old</a>' \
+    '<a href="mtools-4.0.50.tar.gz">new</a>'
+EOF
+chmod +x "${test_directory}/bin/git" "${test_directory}/bin/curl"
+export REAL_GIT=${real_git}
+export PATH="${test_directory}/bin:${PATH}"
+
+actual=$("${fixture}/maintenance/update-toolchain" --check)
+expected=$'cmake: upgrade available: v1.0.0 -> v1.1.0\nllvm: upgrade available: llvmorg-21.1.8 -> llvmorg-21.1.9\nmtools: upgrade available: mtools-4.0.49.tar.gz -> mtools-4.0.50.tar.gz'
+if [[ ${actual} != "${expected}" ]]
+then
+    printf 'Unexpected update check output:\n%s\n' "${actual}" >&2
+    exit 1
+fi
+
+if "${fixture}/maintenance/update-git.sh" cmake --pr >/dev/null 2>&1
+then
+    printf 'Publishing to an unrecognized repository remote was accepted.\n' >&2
+    exit 1
+fi
+
+source_repo=${test_directory}/cmake-source
+git init --quiet --initial-branch=main "${source_repo}"
+git -C "${source_repo}" config user.name 'Maintenance test'
+git -C "${source_repo}" config user.email 'maintenance-test@example.invalid'
+printf 'old\n' > "${source_repo}/version"
+git -C "${source_repo}" add version
+git -C "${source_repo}" -c commit.gpgsign=false commit --no-gpg-sign --quiet -m old
+git -C "${source_repo}" -c tag.forceSignAnnotated=false -c tag.gpgsign=false tag v1.0.0
+git -C "${source_repo}" -c tag.forceSignAnnotated=false -c tag.gpgsign=false tag llvmorg-21.1.8
+old_revision=$(git -C "${source_repo}" rev-parse HEAD)
+printf 'new\n' > "${source_repo}/version"
+git -C "${source_repo}" add version
+git -C "${source_repo}" -c commit.gpgsign=false commit --no-gpg-sign --quiet -m new
+git -C "${source_repo}" -c tag.forceSignAnnotated=false -c tag.gpgsign=false tag v1.1.0
+git -C "${source_repo}" -c tag.forceSignAnnotated=false -c tag.gpgsign=false tag llvmorg-21.1.9
+new_revision=$(git -C "${source_repo}" rev-parse HEAD)
+
+git -C "${source_repo}" switch --quiet --create reaveros-patch "${old_revision}"
+printf 'patched\n' > "${source_repo}/feature"
+git -C "${source_repo}" add feature
+git -C "${source_repo}" -c commit.gpgsign=false commit --no-gpg-sign --quiet -m 'Add local feature'
+mkdir -p "${fixture}/toolchain/cmake/patches"
+git -C "${source_repo}" diff --no-ext-diff "${old_revision}" HEAD \
+    > "${fixture}/toolchain/cmake/patches/000-test.patch"
+git -C "${source_repo}" switch --quiet main
+printf '%s\n' \
+    'set(patch_files' \
+    '    ${CMAKE_CURRENT_LIST_DIR}/cmake/patches/000-test.patch' \
+    ')' > "${fixture}/toolchain/cmake.cmake"
+
+sed -i \
+    -e "s#https://example.invalid/cmake#${source_repo}#" \
+    -e "s/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/${old_revision}/" \
+    "${fixture}/toolchain/config.cmake"
+git -C "${fixture}" config user.name 'Maintenance test'
+git -C "${fixture}" config user.email 'maintenance-test@example.invalid'
+git -C "${fixture}" add toolchain/config.cmake toolchain/cmake.cmake \
+    toolchain/cmake/patches/000-test.patch
+git -C "${fixture}" -c commit.gpgsign=false commit --no-gpg-sign --quiet -m baseline
+printf 'untracked scratch patch\n' > "${fixture}/toolchain/cmake/patches/999-scratch.patch"
+
+cmake_output=${test_directory}/cmake-output
+GITHUB_OUTPUT=${cmake_output} \
+    "${fixture}/maintenance/update-git.sh" cmake --commit >/dev/null
+if [[ $(git -C "${fixture}" branch --show-current) != main ]]
+then
+    printf 'The updater did not return to the original branch.\n' >&2
+    exit 1
+fi
+update_branch=maintenance/update/cmake/main/v1.1.0
+if [[ $(git -C "${fixture}" show -s --format=%s "${update_branch}") \
+    != 'Update toolchain tool cmake from v1.0.0 to v1.1.0.' ]]
+then
+    printf 'The CMake update commit names the wrong scope.\n' >&2
+    exit 1
+fi
+if [[ $(<"${cmake_output}") != "branch=${update_branch}" ]]
+then
+    printf 'The CMake updater did not report its prepared branch.\n' >&2
+    exit 1
+fi
+updated_config=$(git -C "${fixture}" show "${update_branch}:toolchain/config.cmake")
+if [[ ${updated_config} != *"set(REAVEROS_CMAKE_TAG v1.1.0)"* \
+    || ${updated_config} != *"set(REAVEROS_CMAKE_REVISION ${new_revision})"* ]]
+then
+    printf 'The update branch does not pin the new tag and revision.\n' >&2
+    exit 1
+fi
+if git -C "${fixture}" cat-file -e \
+    "${update_branch}:maintenance/update-state/cmake.state" 2>/dev/null
+then
+    printf 'The clean patch refresh left a blocked state file.\n' >&2
+    exit 1
+fi
+if git -C "${fixture}" cat-file -e \
+    "${update_branch}:toolchain/cmake/patches/999-scratch.patch" 2>/dev/null
+then
+    printf 'An untracked scratch patch was included in the update.\n' >&2
+    exit 1
+fi
+git -C "${fixture}" switch --quiet "${update_branch}"
+request=$("${fixture}/maintenance/publish-signed-update" \
+    "${fixture}" "${update_branch}" main --request-only)
+git -C "${fixture}" switch --quiet main
+if ! jq --exit-status \
+    --arg parent "$(git -C "${fixture}" rev-parse HEAD)" \
+    --arg branch "${update_branch}" \
+    '(.variables.input.expectedHeadOid == $parent)
+     and (.variables.input.branch.branchName == $branch)
+     and ((.variables.input.fileChanges.additions | length) == 1)' \
+    <<< "${request}" > /dev/null
+then
+    printf 'The signed-publication request has the wrong parent or file set.\n' >&2
+    exit 1
+fi
+request_contents=$(jq --raw-output \
+    '.variables.input.fileChanges.additions[0].contents' \
+    <<< "${request}" | base64 --decode)
+if [[ ${request_contents} != "${updated_config}" ]]
+then
+    printf 'The signed-publication request does not contain the reviewed update.\n' >&2
+    exit 1
+fi
+
+mtools_output=${test_directory}/mtools-output
+GITHUB_OUTPUT=${mtools_output} \
+    "${fixture}/maintenance/update-mtools.sh" --commit >/dev/null
+if [[ $(git -C "${fixture}" branch --show-current) != main ]]
+then
+    printf 'The mtools updater did not return to the original branch.\n' >&2
+    exit 1
+fi
+mtools_branch=maintenance/update/mtools/main/mtools-4.0.50.tar.gz
+if [[ $(git -C "${fixture}" show -s --format=%s "${mtools_branch}") \
+    != 'Update toolchain tool mtools from mtools-4.0.49.tar.gz to mtools-4.0.50.tar.gz.' ]]
+then
+    printf 'The mtools update commit names the wrong scope.\n' >&2
+    exit 1
+fi
+if [[ $(<"${mtools_output}") != "branch=${mtools_branch}" ]]
+then
+    printf 'The mtools updater did not report its prepared branch.\n' >&2
+    exit 1
+fi
+updated_config=$(git -C "${fixture}" show "${mtools_branch}:toolchain/config.cmake")
+archive_digest=$(printf 'fixture archive' | sha256sum | cut -d' ' -f1)
+if [[ ${updated_config} != *"set(REAVEROS_MTOOLS_VER mtools-4.0.50.tar.gz)"* \
+    || ${updated_config} != *"set(REAVEROS_MTOOLS_SHA256 ${archive_digest})"* ]]
+then
+    printf 'The mtools update branch does not pin the new archive and digest.\n' >&2
+    exit 1
+fi
+
+stale_remote=${test_directory}/stale-remote.git
+git init --bare --quiet "${stale_remote}"
+git -C "${fixture}" remote set-url origin "${stale_remote}"
+git -C "${fixture}" push --quiet origin main
+git -C "${fixture}" push --quiet origin \
+    "${mtools_branch}:refs/heads/${mtools_branch}"
+git -C "${fixture}" branch --delete --force "${mtools_branch}" > /dev/null
+printf 'base advanced\n' > "${fixture}/README"
+git -C "${fixture}" add README
+git -C "${fixture}" -c commit.gpgsign=false commit --no-gpg-sign \
+    --quiet -m 'Advance the update target'
+git -C "${fixture}" push --quiet origin main
+
+rebuilt_mtools_output=${test_directory}/rebuilt-mtools-output
+GITHUB_OUTPUT=${rebuilt_mtools_output} \
+    "${fixture}/maintenance/update-mtools.sh" --commit >/dev/null
+if [[ $(git -C "${fixture}" rev-parse "${mtools_branch}^") \
+    != $(git -C "${fixture}" rev-parse main) ]]
+then
+    printf 'The stale mtools PR was not rebuilt from current main.\n' >&2
+    exit 1
+fi
+if stale_git_result=$("${fixture}/maintenance/update-git.sh" cmake --commit 2>&1)
+then
+    printf 'A stale local Git-backed tool update branch was reused.\n' >&2
+    exit 1
+fi
+if [[ ${stale_git_result} != *'predates main'* ]]
+then
+    printf 'The stale Git-backed tool branch failed for another reason: %s\n' \
+        "${stale_git_result}" >&2
+    exit 1
+fi
+
+git -C "${fixture}" push --quiet --force origin \
+    "${mtools_branch}:refs/heads/${mtools_branch}"
+export TEST_BASE_REVISION
+export TEST_HEAD_REVISION
+export TEST_COMMIT_AUTHOR='reaver-project-maintenance[bot]'
+export REAVEROS_MAINTENANCE_APP_SLUG=reaver-project-maintenance
+export TEST_GH_LOG=${test_directory}/existing-pr-gh.log
+TEST_BASE_REVISION=$(git -C "${fixture}" rev-parse main)
+TEST_HEAD_REVISION=$(git -C "${fixture}" rev-parse "${mtools_branch}")
+cat > "${test_directory}/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${TEST_GH_LOG}"
+case "$*" in
+    *' pr list '*'--json number,headRefName'*) exit 0 ;;
+    *' pr list '*) printf '17\n' ;;
+    *' pr view '*)
+        jq --null-input --compact-output \
+            --arg base "${TEST_BASE_REVISION}" \
+            --arg head "${TEST_HEAD_REVISION}" \
+            '{files: [], baseRefOid: $base, headRefOid: $head,
+              statusCheckRollup: [{__typename: "CheckRun", status: "COMPLETED",
+                                  conclusion: env.TEST_CHECK_CONCLUSION}],
+              labels: [], autoMergeRequest: null}'
+        ;;
+    *'api --paginate '*) exit 0 ;;
+    *'api repos/reaver-project/reaveros/compare/'*) printf 'ahead\n' ;;
+    *'api repos/reaver-project/reaveros/commits/'*)
+        jq --null-input --compact-output \
+            --arg head "${TEST_HEAD_REVISION}" \
+            --arg base "${TEST_BASE_REVISION}" \
+            --arg actor "${TEST_COMMIT_AUTHOR}" \
+            '{sha: $head, author: {login: $actor},
+              commit: {verification: {verified: true}},
+              parents: [{sha: $base}]}'
+        ;;
+    *' label create '*|*' pr edit '*|*' pr comment '*|*' pr merge '*) exit 0 ;;
+    *) printf 'Unexpected fake GitHub call: %s\n' "$*" >&2; exit 1 ;;
+esac
+EOF
+chmod +x "${test_directory}/bin/gh"
+source "${fixture}/maintenance/update-common.sh"
+export TEST_CHECK_CONCLUSION=FAILURE
+export GITHUB_OUTPUT=${test_directory}/existing-pr-output
+update_existing_branch_is_current "${fixture}" "${mtools_branch}" main
+if [[ $(<"${GITHUB_OUTPUT}") != "existing_branch=${mtools_branch}" ]]
+then
+    printf 'The current PR was not scheduled for reconciliation.\n' >&2
+    exit 1
+fi
+update_reconcile_existing_branch "${fixture}" "${mtools_branch}" main
+if [[ ${update_existing_branch_action} != blocked ]] \
+    || ! grep --fixed-strings --quiet 'pr edit 17 --add-label automatic: blocked' \
+        "${TEST_GH_LOG}"
+then
+    printf 'A failed existing PR was not marked blocked.\n' >&2
+    exit 1
+fi
+TEST_CHECK_CONCLUSION=SUCCESS
+update_reconcile_existing_branch "${fixture}" "${mtools_branch}" main
+if [[ ${update_existing_branch_action} != skip ]] \
+    || ! grep --fixed-strings --quiet 'pr merge 17 --auto --squash' \
+        "${TEST_GH_LOG}"
+then
+    printf 'A successful existing PR was not scheduled for auto-merge.\n' >&2
+    exit 1
+fi
+: > "${TEST_GH_LOG}"
+TEST_COMMIT_AUTHOR='untrusted[bot]'
+update_reconcile_existing_branch "${fixture}" "${mtools_branch}" main
+if [[ ${update_existing_branch_action} != blocked ]] \
+    || ! grep --fixed-strings --quiet 'pr edit 17 --add-label automatic: blocked' \
+        "${TEST_GH_LOG}" \
+    || grep --fixed-strings --quiet 'pr merge 17' "${TEST_GH_LOG}"
+then
+    printf 'An unverified maintenance PR head was allowed to auto-merge.\n' >&2
+    exit 1
+fi
+unset GITHUB_OUTPUT TEST_BASE_REVISION TEST_HEAD_REVISION TEST_GH_LOG \
+    TEST_CHECK_CONCLUSION TEST_COMMIT_AUTHOR REAVEROS_MAINTENANCE_APP_SLUG
+
+sed -i \
+    -e "s#https://example.invalid/llvm#${source_repo}#" \
+    -e "s/cccccccccccccccccccccccccccccccccccccccc/${old_revision}/" \
+    "${fixture}/toolchain/config.cmake"
+git -C "${fixture}" add toolchain/config.cmake
+git -C "${fixture}" -c commit.gpgsign=false commit --no-gpg-sign --quiet -m 'Pin local LLVM fixture'
+cat > "${test_directory}/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+if [[ $1 == api && $2 == repos/llvm/llvm-project/releases/tags/llvmorg-21.1.9 ]]
+then
+    printf 'sha256:%064d\n' 2
+    exit
+fi
+exit 1
+EOF
+chmod +x "${test_directory}/bin/gh"
+
+llvm_output=${test_directory}/llvm-output
+GITHUB_OUTPUT=${llvm_output} \
+    "${fixture}/maintenance/update-git.sh" llvm --commit >/dev/null
+llvm_branch=maintenance/update/llvm/main/llvmorg-21.1.9
+if [[ $(<"${llvm_output}") != "branch=${llvm_branch}" ]]
+then
+    printf 'The LLVM updater did not report its prepared branch.\n' >&2
+    exit 1
+fi
+updated_config=$(git -C "${fixture}" show "${llvm_branch}:toolchain/config.cmake")
+if [[ ${updated_config} != *"set(REAVEROS_LLVM_TAG llvmorg-21.1.9)"* \
+    || ${updated_config} != *"set(REAVEROS_LLVM_REVISION ${new_revision})"* \
+    || ${updated_config} != *"set(REAVEROS_LLVM_SOURCE_SHA256 $(printf '%064d' 2))"* ]]
+then
+    printf 'The LLVM update branch does not pin the new tag, revision, and archive digest.\n' >&2
+    exit 1
+fi
+
+dosfstools_source=${test_directory}/dosfstools-source
+git init --quiet --initial-branch=main "${dosfstools_source}"
+git -C "${dosfstools_source}" config user.name 'Maintenance test'
+git -C "${dosfstools_source}" config user.email 'maintenance-test@example.invalid'
+printf 'base\n' > "${dosfstools_source}/version"
+printf 'base\n' > "${dosfstools_source}/other"
+git -C "${dosfstools_source}" add version other
+git -C "${dosfstools_source}" -c commit.gpgsign=false commit --no-gpg-sign --quiet -m base
+git -C "${dosfstools_source}" -c tag.forceSignAnnotated=false -c tag.gpgsign=false tag v2.0
+dosfstools_old_revision=$(git -C "${dosfstools_source}" rev-parse HEAD)
+printf 'upstream\n' > "${dosfstools_source}/version"
+git -C "${dosfstools_source}" add version
+git -C "${dosfstools_source}" -c commit.gpgsign=false commit --no-gpg-sign --quiet -m upstream
+git -C "${dosfstools_source}" -c tag.forceSignAnnotated=false -c tag.gpgsign=false tag v2.1
+dosfstools_new_revision=$(git -C "${dosfstools_source}" rev-parse HEAD)
+git -C "${dosfstools_source}" switch --quiet --create reaveros-patch "${dosfstools_old_revision}"
+printf 'local\n' > "${dosfstools_source}/version"
+printf 'local change\n' > "${dosfstools_source}/other"
+git -C "${dosfstools_source}" add version other
+git -C "${dosfstools_source}" -c commit.gpgsign=false commit --no-gpg-sign --quiet -m 'Adapt local feature'
+mkdir -p "${fixture}/toolchain/dosfstools/patches"
+git -C "${dosfstools_source}" diff --no-ext-diff "${dosfstools_old_revision}" HEAD \
+    > "${fixture}/toolchain/dosfstools/patches/000-conflict.patch"
+git -C "${dosfstools_source}" switch --quiet main
+
+sed -i \
+    -e "s#https://example.invalid/dosfstools#${dosfstools_source}#" \
+    -e "s/ffffffffffffffffffffffffffffffffffffffff/${dosfstools_old_revision}/" \
+    "${fixture}/toolchain/config.cmake"
+git -C "${fixture}" add toolchain/config.cmake toolchain/dosfstools/patches/000-conflict.patch
+git -C "${fixture}" -c commit.gpgsign=false commit --no-gpg-sign --quiet -m 'Pin local dosfstools fixture'
+
+cat > "${test_directory}/bin/copilot" <<'EOF'
+#!/usr/bin/env bash
+for argument in "$@"
+do
+    case ${argument} in
+        --available-tools=*bash*|--allow-tool=*shell*)
+            printf 'The resolver granted shell access.\n' >&2
+            exit 1
+            ;;
+    esac
+done
+while [[ $# -gt 0 ]]
+do
+    if [[ $1 == -p ]]
+    then
+        printf '%s\n' "$2" > "${COPILOT_PROMPT_LOG}"
+        break
+    fi
+    shift
+done
+if ! grep --quiet 'dosfstools cherry-pick conflict' "${COPILOT_PROMPT_LOG}"
+then
+    exit 1
+fi
+if [[ ${COPILOT_STAGE_CONFLICT_MARKERS:-0} == 1 ]]
+then
+    printf '\074\074\074\074\074\074\074 ours\n=======\n>>>>>>> theirs\n' > version
+    git add version
+else
+    printf 'resolved\n' > version
+fi
+if [[ ${COPILOT_STAGE_UNRELATED:-0} == 1 ]]
+then
+    printf 'tampered\n' > other
+    git add other
+fi
+if [[ ${COPILOT_MODIFY_OUTER:-0} == 1 ]]
+then
+    printf 'tampered\n' >> "${COPILOT_OUTER_FILE}"
+fi
+EOF
+chmod +x "${test_directory}/bin/copilot"
+dosfstools_output=${test_directory}/dosfstools-output
+COPILOT_PROMPT_LOG=${test_directory}/copilot-prompt \
+GITHUB_OUTPUT=${dosfstools_output} \
+REAVEROS_COPILOT_PATCH_CONFLICT_RESOLVER="${fixture}/maintenance/resolve-patch-conflict-with-copilot.sh" \
+    "${fixture}/maintenance/update-git.sh" dosfstools --commit >/dev/null
+dosfstools_branch=maintenance/update/dosfstools/main/v2.1
+if [[ $(<"${dosfstools_output}") != "branch=${dosfstools_branch}" ]]
+then
+    printf 'The dosfstools updater did not report its prepared branch.\n' >&2
+    exit 1
+fi
+updated_config=$(git -C "${fixture}" show "${dosfstools_branch}:toolchain/config.cmake")
+if [[ ${updated_config} != *"set(REAVEROS_DOSFSTOOLS_TAG v2.1)"* \
+    || ${updated_config} != *"set(REAVEROS_DOSFSTOOLS_REVISION ${dosfstools_new_revision})"* ]]
+then
+    printf 'The dosfstools update did not pin the new tag and revision.\n' >&2
+    exit 1
+fi
+if git -C "${fixture}" cat-file -e \
+    "${dosfstools_branch}:maintenance/update-state/dosfstools.state" 2>/dev/null
+then
+    printf 'The resolved dosfstools conflict left a blocked state file.\n' >&2
+    exit 1
+fi
+if ! git -C "${fixture}" show -s --format=%B "${dosfstools_branch}" \
+    | grep --fixed-strings --quiet 'toolchain/dosfstools/patches/000-conflict.patch: copilot'
+then
+    printf 'The dosfstools conflict was not recorded as Copilot-resolved.\n' >&2
+    exit 1
+fi
+
+security_checkout=${fixture}/build/maintenance/toolchain-checkouts/security-checkout
+git clone --quiet "${dosfstools_source}" "${security_checkout}"
+source_patch_commit=$(git -C "${dosfstools_source}" rev-parse reaveros-patch)
+if git -C "${security_checkout}" -c commit.gpgsign=false cherry-pick \
+    "${source_patch_commit}" >/dev/null 2>&1
+then
+    printf 'The malicious-stage fixture did not produce a conflict.\n' >&2
+    exit 1
+fi
+security_status=0
+security_result=$( \
+    COPILOT_STAGE_UNRELATED=1 \
+    COPILOT_PROMPT_LOG=${test_directory}/copilot-security-prompt \
+    "${fixture}/maintenance/resolve-patch-conflict-with-copilot.sh" \
+        dosfstools "${security_checkout}" \
+        toolchain/dosfstools/patches/000-conflict.patch \
+        v2.0 v2.1 "${source_patch_commit}" 2>&1) || security_status=$?
+if [[ ${security_status} -ne 42 ]]
+then
+    printf 'Copilot staged unrelated content without a fatal security result.\n' >&2
+    exit 1
+fi
+if [[ ${security_result} != *'Copilot staged an unrelated change: other'* ]]
+then
+    printf 'The resolver failed for an unexpected reason: %s\n' "${security_result}" >&2
+    exit 1
+fi
+if [[ $(git -C "${security_checkout}" show :other) != 'local change' \
+    || $(git -C "${security_checkout}" diff --name-only --diff-filter=U) != version ]]
+then
+    printf 'A rejected Copilot attempt left checkout changes behind.\n' >&2
+    exit 1
+fi
+
+marker_checkout=${fixture}/build/maintenance/toolchain-checkouts/marker-checkout
+git clone --quiet "${dosfstools_source}" "${marker_checkout}"
+if git -C "${marker_checkout}" -c commit.gpgsign=false cherry-pick \
+    "${source_patch_commit}" >/dev/null 2>&1
+then
+    printf 'The staged-marker fixture did not produce a conflict.\n' >&2
+    exit 1
+fi
+if marker_result=$( \
+    COPILOT_STAGE_CONFLICT_MARKERS=1 \
+    COPILOT_PROMPT_LOG=${test_directory}/copilot-marker-prompt \
+    "${fixture}/maintenance/resolve-patch-conflict-with-copilot.sh" \
+        dosfstools "${marker_checkout}" \
+        toolchain/dosfstools/patches/000-conflict.patch \
+        v2.0 v2.1 "${source_patch_commit}" 2>&1)
+then
+    printf 'Copilot was allowed to stage unresolved conflict markers.\n' >&2
+    exit 1
+fi
+if [[ ${marker_result} != *'leftover conflict marker'* ]]
+then
+    printf 'The staged-marker resolver failed for an unexpected reason: %s\n' \
+        "${marker_result}" >&2
+    exit 1
+fi
+if [[ $(git -C "${marker_checkout}" diff --name-only --diff-filter=U) != version ]]
+then
+    printf 'Rejected conflict markers were not restored to the original conflict.\n' >&2
+    exit 1
+fi
+
+patch_context_branch=maintenance/update/cmake/main/v1.1.2
+git -C "${fixture}" switch --quiet --create "${patch_context_branch}" main
+printf ' \n' >> "${fixture}/toolchain/cmake/patches/000-test.patch"
+git -C "${fixture}" add toolchain/cmake/patches/000-test.patch
+git -C "${fixture}" -c commit.gpgsign=false commit --no-gpg-sign \
+    --quiet -m 'Exercise blank patch context'
+if git -C "${fixture}" diff --no-ext-diff --check main HEAD -- \
+    toolchain/cmake/patches/000-test.patch >/dev/null 2>&1
+then
+    printf 'The blank-context fixture did not trigger git diff --check.\n' >&2
+    exit 1
+fi
+patch_request=$("${fixture}/maintenance/publish-signed-update" \
+    "${fixture}" "${patch_context_branch}" main --request-only)
+if ! jq --exit-status \
+    '.variables.input.fileChanges.additions[0].path == "toolchain/cmake/patches/000-test.patch"' \
+    <<< "${patch_request}" > /dev/null
+then
+    printf 'Signed publication rejected a valid patch context line.\n' >&2
+    exit 1
+fi
+git -C "${fixture}" switch --quiet main
+
+multi_commit_branch=maintenance/update/cmake/main/two-commits
+git -C "${fixture}" switch --quiet --create "${multi_commit_branch}" main
+printf '# first preparation commit\n' >> "${fixture}/toolchain/config.cmake"
+git -C "${fixture}" add toolchain/config.cmake
+git -C "${fixture}" -c commit.gpgsign=false commit --no-gpg-sign \
+    --quiet -m 'First preparation commit'
+printf '# second preparation commit\n' >> "${fixture}/toolchain/config.cmake"
+git -C "${fixture}" add toolchain/config.cmake
+git -C "${fixture}" -c commit.gpgsign=false commit --no-gpg-sign \
+    --quiet -m 'Second preparation commit'
+if multi_commit_result=$("${fixture}/maintenance/publish-signed-update" \
+    "${fixture}" "${multi_commit_branch}" main --request-only 2>&1)
+then
+    printf 'Signed publication accepted an unsigned preparation parent.\n' >&2
+    exit 1
+fi
+if [[ ${multi_commit_result} != *'exactly one commit'* ]]
+then
+    printf 'The multi-commit publication failed for another reason: %s\n' \
+        "${multi_commit_result}" >&2
+    exit 1
+fi
+git -C "${fixture}" switch --quiet main
+
+printf 'patched\n' > "${source_repo}/feature"
+git -C "${source_repo}" add feature
+git -C "${source_repo}" -c commit.gpgsign=false commit --no-gpg-sign \
+    --quiet -m 'Include the local feature upstream'
+git -C "${source_repo}" -c tag.forceSignAnnotated=false -c tag.gpgsign=false \
+    tag v1.2.0
+redundant_output=${test_directory}/redundant-output
+if GITHUB_OUTPUT=${redundant_output} \
+    "${fixture}/maintenance/update-git.sh" cmake --commit >/dev/null
+then
+    printf 'A redundant patch was published as a complete update.\n' >&2
+    exit 1
+fi
+redundant_branch=maintenance/update/cmake/main/v1.2.0
+redundant_state=$(git -C "${fixture}" show \
+    "${redundant_branch}:maintenance/update-state/cmake.state")
+if [[ ${redundant_state} != *'status=incomplete'* \
+    || ${redundant_state} != *'|redundant'* \
+    || $(git -C "${fixture}" cat-file -s \
+        "${redundant_branch}:toolchain/cmake/patches/000-test.patch") -eq 0 ]]
+then
+    printf 'The redundant patch was not preserved and blocked for manual removal.\n' >&2
+    exit 1
+fi
+if ! git -C "${fixture}" show -s --format=%B "${redundant_branch}" \
+    | grep --fixed-strings --quiet 'separate reviewed PR targeting main'
+then
+    printf 'The blocked redundant-patch update lacks its repair route.\n' >&2
+    exit 1
+fi
+
+git -C "${fixture}" config --unset user.name
+git -C "${fixture}" config --unset user.email
+continue_result=0
+"${fixture}/maintenance/update-git.sh" cmake --commit --continue \
+    > "${test_directory}/continue-output" 2>&1 || continue_result=$?
+if [[ ${continue_result} -eq 0 \
+    || $(git -C "${fixture}" cat-file -s \
+        "${redundant_branch}:toolchain/cmake/patches/000-test.patch") -eq 0 \
+    || $(git -C "${fixture}" rev-parse "${redundant_branch}^") \
+       != $(git -C "${fixture}" rev-parse main) ]]
+then
+    printf 'Continuing a redundant patch published it or appended another commit.\n' >&2
+    printf 'Continuation result: %s; patch size: %s\n' \
+        "${continue_result}" \
+        "$(git -C "${fixture}" cat-file -s "${redundant_branch}:toolchain/cmake/patches/000-test.patch")" >&2
+    sed -n '1,120p' "${test_directory}/continue-output" >&2
+    exit 1
+fi
+if ! grep --fixed-strings --quiet 'already upstream; --continue cannot repair this PR' \
+    "${test_directory}/continue-output"
+then
+    printf 'Continuation did not refuse the redundant patch.\n' >&2
+    sed -n '1,120p' "${test_directory}/continue-output" >&2
+    exit 1
+fi
+
+git -C "${source_repo}" -c tag.forceSignAnnotated=false -c tag.gpgsign=false \
+    tag llvmorg-21.1.10
+cat > "${test_directory}/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+if [[ $1 == api && $2 == repos/llvm/llvm-project/releases/tags/llvmorg-21.1.10 ]]
+then
+    printf 'sha256:%064d\n' 3
+    exit
+fi
+exit 1
+EOF
+chmod +x "${test_directory}/bin/gh"
+"${fixture}/maintenance/update-git.sh" llvm --commit >/dev/null
+amended_llvm_branch=maintenance/update/llvm/main/llvmorg-21.1.10
+"${fixture}/maintenance/update-git.sh" llvm --commit --amend >/dev/null
+if [[ $(git -C "${fixture}" rev-parse "${amended_llvm_branch}^") \
+    != $(git -C "${fixture}" rev-parse main) ]] \
+    || ! git -C "${fixture}" show -s --format=%s "${amended_llvm_branch}" \
+        | grep --fixed-strings --quiet 'Update toolchain tool llvm from llvmorg-21.1.8 to llvmorg-21.1.10.'
+then
+    printf 'Environment-only Git identity could not amend a one-commit tool update.\n' >&2
+    exit 1
+fi
+
+amend_result=0
+"${fixture}/maintenance/update-git.sh" dosfstools --commit --amend \
+    > "${test_directory}/amend-refreshed-patch" 2>&1 || amend_result=$?
+if [[ ${amend_result} -eq 0 ]] \
+    || grep --fixed-strings --quiet 'Could not apply toolchain/dosfstools/patches/000-conflict.patch to v2.0' \
+        "${test_directory}/amend-refreshed-patch" \
+    || ! grep --fixed-strings --quiet 'Could not cherry-pick' \
+        "${test_directory}/amend-refreshed-patch"
+then
+    printf 'Amendment did not reconstruct from the target baseline patch.\n' >&2
+    sed -n '1,120p' "${test_directory}/amend-refreshed-patch" >&2
+    exit 1
+fi
+git -C "${fixture}" branch --delete --force "${dosfstools_branch}" > /dev/null
+if "${fixture}/maintenance/update-git.sh" dosfstools --commit \
+    > "${test_directory}/blocked-output" 2>&1
+then
+    printf 'The unresolved dosfstools patch unexpectedly completed.\n' >&2
+    exit 1
+fi
+dosfstools_checkout=${fixture}/build/maintenance/toolchain-checkouts/dosfstools
+rm -rf "${dosfstools_checkout}"
+if "${fixture}/maintenance/update-git.sh" dosfstools --commit --continue \
+    > "${test_directory}/reconstruct-output" 2>&1
+then
+    printf 'A reconstructed conflict was reported as resolved.\n' >&2
+    exit 1
+fi
+if ! grep --fixed-strings --quiet 'Reconstructed the dosfstools conflict' \
+    "${test_directory}/reconstruct-output" \
+    || [[ ! -f ${dosfstools_checkout}/.git/CHERRY_PICK_HEAD ]]
+then
+    printf 'The missing dosfstools checkout was not reconstructed.\n' >&2
+    sed -n '1,120p' "${test_directory}/reconstruct-output" >&2
+    exit 1
+fi
+printf 'resolved manually\n' > "${dosfstools_checkout}/version"
+git -C "${dosfstools_checkout}" add version
+"${fixture}/maintenance/update-git.sh" dosfstools --commit --continue \
+    > "${test_directory}/resolved-output" 2>&1
+if git -C "${fixture}" cat-file -e \
+    "${dosfstools_branch}:maintenance/update-state/dosfstools.state" 2>/dev/null \
+    || [[ $(git -C "${fixture}" rev-parse "${dosfstools_branch}^") \
+          != $(git -C "${fixture}" rev-parse main) ]]
+then
+    printf 'The reconstructed conflict did not finish as one complete update.\n' >&2
+    exit 1
+fi
+
+git -C "${fixture}" rm --quiet toolchain/cmake/patches/000-test.patch
+printf '%s\n' 'set(patch_files)' > "${fixture}/toolchain/cmake.cmake"
+git -C "${fixture}" add toolchain/cmake.cmake
+git -C "${fixture}" -c commit.gpgsign=false commit --no-gpg-sign \
+    --quiet -m 'Remove a patch already upstream'
+git -C "${fixture}" branch --delete --force "${redundant_branch}" > /dev/null
+"${fixture}/maintenance/update-git.sh" cmake --commit \
+    > "${test_directory}/rebuilt-cmake-output" 2>&1
+if git -C "${fixture}" cat-file -e \
+    "${redundant_branch}:maintenance/update-state/cmake.state" 2>/dev/null \
+    || [[ $(git -C "${fixture}" rev-parse "${redundant_branch}^") \
+          != $(git -C "${fixture}" rev-parse main) ]]
+then
+    printf 'A reviewed patch removal did not allow a fresh clean update.\n' >&2
+    exit 1
+fi
+
+git -C "${fixture}" branch --delete --force "${dosfstools_branch}" > /dev/null
+fatal_output=${test_directory}/fatal-output
+if COPILOT_STAGE_UNRELATED=1 \
+    COPILOT_PROMPT_LOG=${test_directory}/copilot-fatal-prompt \
+    GITHUB_OUTPUT=${fatal_output} \
+    REAVEROS_COPILOT_PATCH_CONFLICT_RESOLVER="${fixture}/maintenance/resolve-patch-conflict-with-copilot.sh" \
+    "${fixture}/maintenance/update-git.sh" dosfstools --commit \
+        > "${test_directory}/fatal-result" 2>&1
+then
+    printf 'The updater continued after a resolver security violation.\n' >&2
+    exit 1
+fi
+if [[ -f ${fatal_output} ]] \
+    || ! grep --fixed-strings --quiet 'refusing to publish this update' \
+        "${test_directory}/fatal-result"
+then
+    printf 'The unsafe update was still offered for publication.\n' >&2
+    exit 1
+fi
+
+outer_checkout=${fixture}/build/maintenance/toolchain-checkouts/outer-checkout
+if git -C "${fixture}" diff --quiet -- toolchain/config.cmake
+then
+    printf 'The outer-worktree fixture lacks an already-dirty config.\n' >&2
+    exit 1
+fi
+git clone --quiet "${dosfstools_source}" "${outer_checkout}"
+if git -C "${outer_checkout}" -c commit.gpgsign=false cherry-pick \
+    "${source_patch_commit}" >/dev/null 2>&1
+then
+    printf 'The outer-worktree fixture did not produce a conflict.\n' >&2
+    exit 1
+fi
+outer_status=0
+outer_result=$( \
+    COPILOT_MODIFY_OUTER=1 \
+    COPILOT_OUTER_FILE=${fixture}/toolchain/config.cmake \
+    COPILOT_PROMPT_LOG=${test_directory}/copilot-outer-prompt \
+    "${fixture}/maintenance/resolve-patch-conflict-with-copilot.sh" \
+        dosfstools "${outer_checkout}" \
+        toolchain/dosfstools/patches/000-conflict.patch \
+        v2.0 v2.1 "${source_patch_commit}" 2>&1) || outer_status=$?
+if [[ ${outer_status} -ne 42 \
+    || ${outer_result} != *'changed the outer ReaverOS worktree or Git configuration'* ]]
+then
+    printf 'Outer-worktree mutation did not fail closed: %s\n' "${outer_result}" >&2
+    exit 1
+fi
+
+printf 'Toolchain tool update tests passed.\n'
