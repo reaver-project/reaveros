@@ -8,10 +8,19 @@ case $(basename -- "$0") in
         ;;
     make)
         [[ $1 == --dry-run && $2 == --no-print-directory ]]
-        if [[ $3 == toolchain-llvm && ${TEST_LLVM_REBUILD} == true ]]
-        then
-            printf "Performing build step for 'toolchain-llvm'\n"
-        fi
+        case $3 in
+            all-toolchain) ;;
+            toolchain-llvm-install)
+                if [[ ${TEST_LLVM_REBUILD} == true ]]
+                then
+                    printf "Performing build step for 'toolchain-llvm'\n"
+                fi
+                ;;
+            *)
+                printf 'Unexpected toolchain probe target: %s\n' "$3" >&2
+                exit 1
+                ;;
+        esac
         exit 0
         ;;
 esac
