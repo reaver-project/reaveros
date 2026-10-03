@@ -76,7 +76,7 @@ index 506536cdc..14512ff8f 100644
    ToolChains/Serenity.cpp
    ToolChains/Solaris.cpp
 diff --git a/clang/lib/Driver/Driver.cpp b/clang/lib/Driver/Driver.cpp
-index e606cdc4c..7425a124e 100644
+index e606cdc4c..ab697d594 100644
 --- a/clang/lib/Driver/Driver.cpp
 +++ b/clang/lib/Driver/Driver.cpp
 @@ -39,6 +39,7 @@
@@ -87,7 +87,13 @@ index e606cdc4c..7425a124e 100644
  #include "ToolChains/PPCFreeBSD.h"
  #include "ToolChains/PPCLinux.h"
  #include "ToolChains/PS4CPU.h"
-@@ -7158,6 +7159,9 @@ const ToolChain &Driver::getToolChain(const ArgList &Args,
+@@ -6978,3 +6979,5 @@ std::string Driver::GetStdModuleManifestPath(const Compilation &C,
+     return evaluate("libstdc++.a").value_or(error);
+   }
++  case ToolChain::CST_Rosestd:
++    return error;
+   }
+@@ -7158,6 +7161,9 @@ const ToolChain &Driver::getToolChain(const ArgList &Args,
        else
          TC = std::make_unique<toolchains::Linux>(*this, Target, Args);
        break;
@@ -99,10 +105,10 @@ index e606cdc4c..7425a124e 100644
        break;
 diff --git a/clang/lib/Driver/ToolChains/ReaverOS.cpp b/clang/lib/Driver/ToolChains/ReaverOS.cpp
 new file mode 100644
-index 000000000..564ed020a
+index 000000000..89c024763
 --- /dev/null
 +++ b/clang/lib/Driver/ToolChains/ReaverOS.cpp
-@@ -0,0 +1,365 @@
+@@ -0,0 +1,368 @@
 +//===--- ReaverOS.cpp - ReaverOS ToolChain Implementations --------*- C++
 +//-*-===//
 +//
@@ -118,7 +124,7 @@ index 000000000..564ed020a
 +#include "clang/Driver/Compilation.h"
 +#include "clang/Driver/Driver.h"
 +#include "clang/Driver/DriverDiagnostic.h"
-+#include "clang/Driver/Options.h"
++#include "clang/Options/Options.h"
 +#include "clang/Driver/SanitizerArgs.h"
 +#include "llvm/Option/ArgList.h"
 +#include "llvm/ProfileData/InstrProf.h"
@@ -213,10 +219,10 @@ index 000000000..564ed020a
 +
 +  ToolChain.AddFilePathLibArgs(Args, CmdArgs);
 +
-+  if (D.isUsingLTO()) {
++  if (auto LTO = ToolChain.getLTOMode(Args); LTO != LTOK_None) {
 +    assert(!Inputs.empty() && "Must have at least one input.");
 +    addLTOOptions(ToolChain, Args, CmdArgs, Output, Inputs,
-+                  D.getLTOMode() == LTOK_Thin);
++                  LTO == LTOK_Thin);
 +  }
 +
 +  bool NeedsSanitizerDeps = addSanitizerRuntimes(ToolChain, Args, CmdArgs);
@@ -274,8 +280,9 @@ index 000000000..564ed020a
 +}
 +
 +std::string ReaverOS::ComputeEffectiveClangTriple(const ArgList &Args,
++                                                  BoundArch BA,
 +                                                  types::ID InputType) const {
-+  llvm::Triple Triple(ComputeLLVMTriple(Args, InputType));
++  llvm::Triple Triple(ComputeLLVMTriple(Args, BA, InputType));
 +  return Triple.str();
 +}
 +
@@ -285,7 +292,7 @@ index 000000000..564ed020a
 +
 +ToolChain::RuntimeLibType
 +ReaverOS::GetRuntimeLibType(const ArgList &Args) const {
-+  if (Arg *A = Args.getLastArg(clang::driver::options::OPT_rtlib_EQ)) {
++  if (Arg *A = Args.getLastArg(options::OPT_rtlib_EQ)) {
 +    StringRef Value = A->getValue();
 +    if (Value != "compiler-rt")
 +      getDriver().Diag(clang::diag::err_drv_invalid_rtlib_name)
@@ -319,7 +326,7 @@ index 000000000..564ed020a
 +}
 +
 +void ReaverOS::addClangTargetOptions(const ArgList &DriverArgs,
-+                                     ArgStringList &CC1Args,
++                                     ArgStringList &CC1Args, BoundArch,
 +                                     Action::OffloadKind) const {
 +  if (!DriverArgs.hasFlag(options::OPT_fuse_init_array,
 +                          options::OPT_fno_use_init_array, true))
@@ -381,7 +388,7 @@ index 000000000..564ed020a
 +    return;
 +
 +  const Driver &D = getDriver();
-+  std::string Target = getTripleString();
++  StringRef Target = getTripleString();
 +
 +  auto AddCXXIncludePath = [&](StringRef Path) {
 +    std::string Version = "v0";
@@ -434,8 +441,10 @@ index 000000000..564ed020a
 +  }
 +}
 +
-+SanitizerMask ReaverOS::getSupportedSanitizers() const {
-+  SanitizerMask Res = ToolChain::getSupportedSanitizers();
++SanitizerMask
++ReaverOS::getSupportedSanitizers(BoundArch BA,
++                                 Action::OffloadKind DeviceOffloadKind) const {
++  SanitizerMask Res = ToolChain::getSupportedSanitizers(BA, DeviceOffloadKind);
 +  /*
 +  Res |= SanitizerKind::Address;
 +  Res |= SanitizerKind::HWAddress;
@@ -470,10 +479,10 @@ index 000000000..564ed020a
 +}
 diff --git a/clang/lib/Driver/ToolChains/ReaverOS.h b/clang/lib/Driver/ToolChains/ReaverOS.h
 new file mode 100644
-index 000000000..2b8f8e175
+index 000000000..4c8dc9e11
 --- /dev/null
 +++ b/clang/lib/Driver/ToolChains/ReaverOS.h
-@@ -0,0 +1,108 @@
+@@ -0,0 +1,111 @@
 +//===--- ReaverOS.h - ReaverOS ToolChain Implementations ----------*- C++ -*-===//
 +//
 +// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
@@ -545,9 +554,12 @@ index 000000000..2b8f8e175
 +  }
 +
 +  std::string ComputeEffectiveClangTriple(const llvm::opt::ArgList &Args,
++                                          BoundArch BA,
 +                                          types::ID InputType) const override;
 +
-+  SanitizerMask getSupportedSanitizers() const override;
++  SanitizerMask
++  getSupportedSanitizers(BoundArch BA,
++                         Action::OffloadKind DeviceOffloadKind) const override;
 +  SanitizerMask getDefaultSanitizers() const override;
 +
 +  RuntimeLibType
@@ -558,7 +570,7 @@ index 000000000..2b8f8e175
 +  GetCXXStdlibType(const llvm::opt::ArgList &Args) const override;
 +
 +  void addClangTargetOptions(const llvm::opt::ArgList &DriverArgs,
-+                             llvm::opt::ArgStringList &CC1Args,
++                             llvm::opt::ArgStringList &CC1Args, BoundArch,
 +                             Action::OffloadKind DeviceOffloadKind) const override;
 +  void
 +  AddClangSystemIncludeArgs(const llvm::opt::ArgList &DriverArgs,
