@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $# -ne 5 || ! $2 =~ ^toolchain-[a-z0-9-]+$ || ! $5 =~ ^[a-zA-Z0-9._:-]+$ ]]
+then
+    printf 'usage: %s <build root> <toolchain project> <binary directory> <install directory> <source identity>\n' "$0" >&2
+    exit 2
+fi
+
+build_root=$(realpath -m -- "$1")
+project=$2
+binary_directory=$(realpath -m -- "$3")
+install_directory=$(realpath -m -- "$4")
+expected_directory=${build_root}/toolchain/${project}-prefix/src/${project}-build
+expected_install=${build_root}/install/toolchain/${project#toolchain-}
+if [[ ${build_root} == / || ${binary_directory} != "${expected_directory}" \
+    || ${install_directory} != "${expected_install}" ]]
+then
+    printf 'Refusing to invalidate unexpected toolchain directories: %s %s\n' "$3" "$4" >&2
+    exit 2
+fi
+
+identity_directory=${build_root}/toolchain
+identity_file=${identity_directory}/${project}-source-identity
+if [[ -L ${identity_file} || ( -e ${identity_file} && ! -f ${identity_file} ) ]]
+then
+    printf 'The toolchain source identity path is not a regular file.\n' >&2
+    exit 2
+fi
+
+identity=$5
+if [[ -f ${identity_file} && $(<"${identity_file}") == "${identity}" ]]
+then
+    mkdir -p -- "${binary_directory}"
+    mkdir -p -- "${install_directory}"
+    exit 0
+fi
+
+# Generated build outputs and installed files may not be compatible with a
+# different source release. In particular, LLVM's lib/clang/<version> remains
+# alongside the new release unless the previous install tree is removed.
+if [[ -e ${binary_directory} || -L ${binary_directory} ]]
+then
+    rm -r -- "${binary_directory}"
+fi
+if [[ -e ${install_directory} || -L ${install_directory} ]]
+then
+    rm -r -- "${install_directory}"
+fi
+mkdir -p -- "${binary_directory}"
+mkdir -p -- "${install_directory}"
+mkdir -p -- "${identity_directory}"
+printf '%s\n' "${identity}" > "${identity_file}"

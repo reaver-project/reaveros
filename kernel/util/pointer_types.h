@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include <cstddef>
+
 #include "integer_types.h"
 
 namespace kernel

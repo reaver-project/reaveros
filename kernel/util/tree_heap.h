@@ -20,6 +20,7 @@
 
 #include <climits>
 #include <memory>
+#include <utility>
 
 namespace kernel::util
 {

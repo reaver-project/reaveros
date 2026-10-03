@@ -66,7 +66,7 @@ target_rebuild_commands()
 }
 
 all_toolchain_commands=$(target_rebuild_commands all-toolchain)
-llvm_commands=$(target_rebuild_commands toolchain-llvm)
+llvm_commands=$(target_rebuild_commands toolchain-llvm-install)
 
 all_toolchain=false
 llvm=false

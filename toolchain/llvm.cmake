@@ -130,6 +130,9 @@ ExternalProject_Add_Step(toolchain-llvm
     DEPENDERS configure
     DEPENDS ${patch_dependency}
 )
+reaveros_add_ep_source_identity_step(toolchain-llvm
+    ${REAVEROS_LLVM_REVISION}:${REAVEROS_LLVM_SOURCE_SHA256}
+    DEPENDEES hydrate-source)
 ExternalProject_Add_Step(toolchain-llvm
     apply-patches
     COMMAND git reset --hard
@@ -147,8 +150,6 @@ reaveros_add_ep_prune_target(toolchain-llvm
 
 # install compiler-rt to the appropriate sysroots
 string(REGEX REPLACE "llvmorg-(([0-9]+)\.[0-9]+\.[0-9])+(-.*)?" "\\2" _llvm_version "${REAVEROS_LLVM_TAG}")
-ExternalProject_Get_Property(toolchain-llvm BINARY_DIR)
-
 foreach (architecture IN LISTS REAVEROS_ARCHITECTURES)
     foreach (mode IN ITEMS freestanding hosted)
         set(_sub_path "${_llvm_version}/lib/${_reaveros_${architecture}_${mode}_target}")
