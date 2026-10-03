@@ -2,20 +2,27 @@
 
 set -euo pipefail
 
-if [[ $# -ne 3 ]]
+if [[ $# -ne 4 ]]
 then
-    printf 'usage: %s <source directory> <tag> <revision>\n' "$0" >&2
+    printf 'usage: %s <source directory> <tag> <revision> <repository>\n' "$0" >&2
     exit 2
 fi
 
 source_directory=$1
 tag=$2
 revision=$3
+repository=$4
 
-if [[ ! ${tag} =~ ^[[:alnum:]_.-]+$ || ! ${revision} =~ ^[0-9a-f]{40}$ ]]
+if [[ ! ${tag} =~ ^[[:alnum:]_.-]+$ || ! ${revision} =~ ^[0-9a-f]{40}$ \
+    || -z ${repository} ]]
 then
     printf 'Invalid Git tag or revision.\n' >&2
     exit 2
+fi
+
+if [[ ! -e ${source_directory}/.git ]]
+then
+    git clone --depth=1 --branch "${tag}" -- "${repository}" "${source_directory}"
 fi
 
 local_revision=$(git -C "${source_directory}" rev-parse --verify --quiet "refs/tags/${tag}^{commit}" || true)
