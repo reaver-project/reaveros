@@ -54,6 +54,28 @@ find "${source_directory}" -mindepth 1 -maxdepth 1 ! -name .git \
 tar -xf "${archive}" --no-same-owner --strip-components=1 -C "${source_directory}"
 git -C "${source_directory}" reset --mixed --quiet "${revision}"
 
+# Git archives expand this export-subst metadata file. Accept only the exact
+# expansion for the pinned commit and tag, then restore its tracked template.
+metadata_path=clang/bindings/python/.git_archival.txt
+metadata_file=${source_directory}/${metadata_path}
+if [[ -f ${metadata_file} ]] \
+    && ! git -C "${source_directory}" diff --quiet -- "${metadata_path}" \
+    && [[ $(git -C "${source_directory}" check-attr --cached export-subst -- "${metadata_path}") \
+        == "${metadata_path}: export-subst: set" ]]
+then
+    commit_date=$(git -C "${source_directory}" show -s --format=%cI "${revision}")
+    if cmp -s "${metadata_file}" \
+        <(printf 'node: %s\nnode-date: %s\ndescribe-name: %s\n' \
+            "${revision}" "${commit_date}" "${tag}")
+    then
+        printf '%s\n' \
+            'node: $Format:%H$' \
+            'node-date: $Format:%cI$' \
+            'describe-name: $Format:%(describe:tags=true,match=llvmorg-*[0-9]*)$' \
+            > "${metadata_file}"
+    fi
+fi
+
 if [[ -n $(git -C "${source_directory}" status --porcelain --ignored --untracked-files=all) ]]
 then
     printf 'Archive contents do not match Git revision %s.\n' "${revision}" >&2

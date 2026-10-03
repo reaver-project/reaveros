@@ -86,6 +86,48 @@ then
     exit 1
 fi
 
+metadata_path=clang/bindings/python/.git_archival.txt
+mkdir -p "${test_directory}/upstream/clang/bindings/python"
+printf '%s\n' "${metadata_path} export-subst" \
+    > "${test_directory}/upstream/.gitattributes"
+printf '%s\n' \
+    'node: $Format:%H$' \
+    'node-date: $Format:%cI$' \
+    'describe-name: $Format:%(describe:tags=true,match=llvmorg-*[0-9]*)$' \
+    > "${test_directory}/upstream/${metadata_path}"
+git -C "${test_directory}/upstream" add .gitattributes "${metadata_path}"
+commit_source llvmorg-23.1.2
+release_revision=$(git -C "${test_directory}/upstream" rev-parse HEAD)
+release_archive="${test_directory}/llvmorg-23.1.2.tar"
+archived_metadata=$(tar -xOf "${release_archive}" \
+    "sample-llvmorg-23.1.2/${metadata_path}")
+if [[ ${archived_metadata} != *"node: ${release_revision}"* ]]
+then
+    printf 'The fixture archive did not expand Git metadata.\n' >&2
+    exit 1
+fi
+bash "${hydrator}" "${test_directory}/checkout" "${repository}" \
+    llvmorg-23.1.2 "${release_revision}" "${release_archive}"
+if [[ -n $(git -C "${test_directory}/checkout" status --porcelain --ignored --untracked-files=all) ]]
+then
+    printf 'An expected export-subst expansion left the checkout dirty.\n' >&2
+    exit 1
+fi
+
+mkdir -p "${test_directory}/tampered"
+tar -xf "${release_archive}" -C "${test_directory}/tampered"
+printf 'node: tampered\n' \
+    > "${test_directory}/tampered/sample-llvmorg-23.1.2/${metadata_path}"
+tar -cf "${test_directory}/tampered.tar" -C "${test_directory}/tampered" \
+    sample-llvmorg-23.1.2
+if bash "${hydrator}" "${test_directory}/incorrect-metadata" "${repository}" \
+    llvmorg-23.1.2 "${release_revision}" "${test_directory}/tampered.tar" \
+    > /dev/null 2>&1
+then
+    printf 'A tampered export-subst expansion was accepted.\n' >&2
+    exit 1
+fi
+
 if bash "${hydrator}" "${test_directory}/incorrect" "${repository}" \
     second "${second_revision}" "${test_directory}/first.tar" > /dev/null 2>&1
 then
