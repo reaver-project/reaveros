@@ -1,0 +1,138 @@
+name: Daily maintenance
+
+on:
+    workflow_dispatch:
+    schedule:
+      - cron: '0 4 * * *'
+
+permissions:
+    contents: read
+
+jobs:
+    toolchain-tools:
+        name: Update toolchain tool ${{ matrix.tool }}
+        if: github.ref == 'refs/heads/main'
+        runs-on: ubuntu-latest
+        timeout-minutes: 120
+        environment: maintenance
+
+        concurrency:
+            group: toolchain-maintenance-${{ matrix.tool }}
+            cancel-in-progress: false
+
+        permissions:
+            contents: read
+            copilot-requests: write
+            pull-requests: read
+
+        strategy:
+            fail-fast: false
+            matrix:
+                tool:
+                  - cmake
+                  - llvm
+                  - dosfstools
+                  - mtools
+
+        steps:
+          - name: Check out trusted main
+            uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+            with:
+                ref: main
+                persist-credentials: false
+
+          - name: Install pinned Copilot CLI for Git tool patches
+            if: matrix.tool != 'mtools'
+            run: |
+                npm ci --prefix maintenance/copilot --no-audit --no-fund
+                echo "$GITHUB_WORKSPACE/maintenance/copilot/node_modules/.bin" >> "$GITHUB_PATH"
+
+          - name: Prepare tool update
+            id: prepare
+            env:
+                COPILOT_GITHUB_TOKEN: ${{ github.token }}
+                GH_TOKEN: ${{ github.token }}
+                GIT_AUTHOR_NAME: ${{ vars.MAINTENANCE_APP_SLUG }}[bot]
+                GIT_AUTHOR_EMAIL: ${{ vars.MAINTENANCE_APP_SLUG }}[bot]@users.noreply.github.com
+                GIT_COMMITTER_NAME: ${{ vars.MAINTENANCE_APP_SLUG }}[bot]
+                GIT_COMMITTER_EMAIL: ${{ vars.MAINTENANCE_APP_SLUG }}[bot]@users.noreply.github.com
+                REAVEROS_COPILOT_PATCH_CONFLICT_RESOLVER: ./maintenance/resolve-patch-conflict-with-copilot.sh
+                REAVEROS_MAINTENANCE_CI: '1'
+            run: |
+                set +e
+                ./maintenance/update-toolchain --commit "${{ matrix.tool }}"
+                result=$?
+                set -e
+                printf 'result=%s\n' "${result}" >> "$GITHUB_OUTPUT"
+
+          - name: Create a repository-scoped maintenance token
+            id: maintenance-app
+            if: steps.prepare.outputs.branch != '' || steps.prepare.outputs.existing_branch != ''
+            uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+            with:
+                client-id: ${{ vars.MAINTENANCE_APP_CLIENT_ID }}
+                private-key: ${{ secrets.MAINTENANCE_APP_PRIVATE_KEY }}
+                owner: reaver-project
+                repositories: reaveros
+                permission-contents: write
+                permission-pull-requests: write
+
+          - name: Configure App Git authentication
+            if: steps.prepare.outputs.branch != ''
+            env:
+                GH_TOKEN: ${{ steps.maintenance-app.outputs.token }}
+            run: gh auth setup-git
+
+          - name: Publish tool update
+            if: steps.prepare.outputs.branch != ''
+            env:
+                GH_TOKEN: ${{ steps.maintenance-app.outputs.token }}
+                REAVEROS_MAINTENANCE_APP_SLUG: ${{ steps.maintenance-app.outputs.app-slug }}
+            run: ./maintenance/publish-tool-update "${{ steps.prepare.outputs.branch }}"
+
+          - name: Reconcile an existing update PR
+            if: steps.prepare.outputs.existing_branch != ''
+            env:
+                EXISTING_BRANCH: ${{ steps.prepare.outputs.existing_branch }}
+                GH_TOKEN: ${{ steps.maintenance-app.outputs.token }}
+                REAVEROS_MAINTENANCE_APP_SLUG: ${{ steps.maintenance-app.outputs.app-slug }}
+                TOOL: ${{ matrix.tool }}
+            run: |
+                source maintenance/update-common.sh
+                update_reconcile_existing_branch \
+                    "$PWD" "${EXISTING_BRANCH}" main \
+                    "maintenance/update-state/${TOOL}.state"
+                if [[ ${update_existing_branch_action} != skip ]]
+                then
+                    printf 'The existing %s update needs attention: %s.\n' \
+                        "${TOOL}" "${update_existing_branch_action}" >&2
+                    exit 1
+                fi
+
+          - name: Fail on an incomplete update
+            if: always() && steps.prepare.outputs.result != '0'
+            run: exit 1
+
+          - name: Show unresolved tool patch state
+            if: failure() && matrix.tool != 'mtools'
+            env:
+                TOOL: ${{ matrix.tool }}
+            run: |
+                set -euo pipefail
+                state_path="maintenance/update-state/${TOOL}.state"
+                state_branch=$(git for-each-ref \
+                    --sort=-committerdate \
+                    --format='%(refname:short)' \
+                    "refs/heads/maintenance/update/${TOOL}/" \
+                    | while read -r branch
+                      do
+                          if git cat-file -e "${branch}:${state_path}" 2>/dev/null
+                          then
+                              printf '%s\n' "${branch}"
+                              break
+                          fi
+                      done)
+                if [[ -n "${state_branch}" ]]
+                then
+                    git show "${state_branch}:${state_path}" >> "$GITHUB_STEP_SUMMARY"
+                fi
