@@ -61,6 +61,19 @@ then
     printf 'A tag that differs from its configured revision was accepted.\n' >&2
     exit 1
 fi
+if bash "${self_dir}/../toolchain/ensure-git-tag" \
+    "${test_directory}/checkout" v2 "${second_revision}" "" \
+    > "${test_directory}/empty-repository-log" 2>&1
+then
+    printf 'An empty repository was accepted.\n' >&2
+    exit 1
+fi
+if ! grep --fixed-strings --quiet 'Git repository is required.' \
+    "${test_directory}/empty-repository-log"
+then
+    printf 'An empty repository did not produce a specific diagnostic.\n' >&2
+    exit 1
+fi
 
 printf 'third\n' > "${test_directory}/upstream/source"
 git -C "${test_directory}/upstream" add source
