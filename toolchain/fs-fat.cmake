@@ -21,6 +21,8 @@ ExternalProject_Add(toolchain-dosfstools
 )
 reaveros_add_ep_prune_target(toolchain-dosfstools)
 reaveros_add_ep_fetch_tag_target(toolchain-dosfstools ${REAVEROS_DOSFSTOOLS_REVISION})
+reaveros_add_ep_source_identity_step(toolchain-dosfstools ${REAVEROS_DOSFSTOOLS_REVISION}
+    DEPENDEES set-to-tag)
 
 reaveros_register_target(toolchain-dosfstools-install toolchain)
 
@@ -43,5 +45,7 @@ ExternalProject_Add(toolchain-mtools
     INSTALL_COMMAND $(MAKE) install
 )
 reaveros_add_ep_prune_target(toolchain-mtools)
+reaveros_add_ep_source_identity_step(toolchain-mtools ${REAVEROS_MTOOLS_SHA256}
+    DEPENDEES download update patch)
 
 reaveros_register_target(toolchain-mtools-install toolchain)

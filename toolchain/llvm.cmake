@@ -126,13 +126,13 @@ ExternalProject_Add_Step(toolchain-llvm
     COMMAND bash ${REAVEROS_SOURCE_DIR}/toolchain/hydrate-git-archive
         <SOURCE_DIR> ${REAVEROS_LLVM_REPO} ${REAVEROS_LLVM_TAG}
         ${REAVEROS_LLVM_REVISION} <DOWNLOADED_FILE>
-    COMMAND bash ${REAVEROS_SOURCE_DIR}/toolchain/invalidate-stale-llvm-build
-        "${REAVEROS_BINARY_DIR}" <BINARY_DIR>
-        ${REAVEROS_LLVM_REVISION} ${REAVEROS_LLVM_SOURCE_SHA256}
     DEPENDEES download update patch
     DEPENDERS configure
     DEPENDS ${patch_dependency}
 )
+reaveros_add_ep_source_identity_step(toolchain-llvm
+    ${REAVEROS_LLVM_REVISION}:${REAVEROS_LLVM_SOURCE_SHA256}
+    DEPENDEES hydrate-source)
 ExternalProject_Add_Step(toolchain-llvm
     apply-patches
     COMMAND git reset --hard

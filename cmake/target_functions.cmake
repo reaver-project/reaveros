@@ -271,6 +271,7 @@ function(reaveros_add_ep_prune_target external_project)
         COMMAND touch ${STAMP_DIR}/${external_project}-skip-update
         COMMAND touch ${STAMP_DIR}/${external_project}-patch
         COMMAND touch ${STAMP_DIR}/${external_project}-apply-patches
+        COMMAND touch ${STAMP_DIR}/${external_project}-invalidate-build
         COMMAND touch ${STAMP_DIR}/${external_project}-configure
         COMMAND touch ${STAMP_DIR}/${external_project}-build
         COMMAND touch ${STAMP_DIR}/${external_project}-install
@@ -293,6 +294,33 @@ function(reaveros_add_ep_prune_target external_project)
 
     add_dependencies(all-toolchain-prune
         ${external_project}-prune
+    )
+endfunction()
+
+function(reaveros_add_ep_source_identity_step external_project identity)
+    cmake_parse_arguments(source "" "" "DEPENDEES" ${ARGN})
+    if (source_UNPARSED_ARGUMENTS OR NOT source_DEPENDEES)
+        message(FATAL_ERROR "Invalid source identity step for ${external_project}")
+    endif()
+
+    set(dependency "${REAVEROS_BINARY_DIR}/toolchain/${external_project}-source-inputs")
+    file(MAKE_DIRECTORY "${REAVEROS_BINARY_DIR}/toolchain")
+    if (EXISTS "${dependency}")
+        file(READ "${dependency}" previous_identity)
+    else()
+        set(previous_identity "")
+    endif()
+    if (NOT previous_identity STREQUAL "${identity}\n")
+        file(WRITE "${dependency}" "${identity}\n")
+    endif()
+
+    ExternalProject_Add_Step(${external_project}
+        invalidate-build
+        COMMAND bash ${REAVEROS_SOURCE_DIR}/toolchain/invalidate-stale-build
+            "${REAVEROS_BINARY_DIR}" ${external_project} <BINARY_DIR> "${identity}"
+        DEPENDEES ${source_DEPENDEES}
+        DEPENDERS configure
+        DEPENDS ${dependency}
     )
 endfunction()
 
@@ -332,6 +360,7 @@ function(reaveros_add_ep_fetch_tag_target external_project revision)
 
     add_custom_command(TARGET ${external_project} POST_BUILD
         COMMAND touch ${STAMP_DIR}/${external_project}-set-to-tag
+        COMMAND touch ${STAMP_DIR}/${external_project}-invalidate-build
         COMMAND touch ${STAMP_DIR}/${external_project}-skip-update
         COMMAND touch ${STAMP_DIR}/${external_project}-patch
         COMMAND touch ${STAMP_DIR}/${external_project}-apply-patches

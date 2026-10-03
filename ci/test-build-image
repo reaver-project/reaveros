@@ -68,7 +68,8 @@ llvm_stamp_directory="${prune_build_directory}/toolchain/toolchain-llvm-prefix/s
 touch "${llvm_stamp_directory}/toolchain-llvm-mkdir"
 touch "${llvm_stamp_directory}/toolchain-llvm-download"
 cmake --build "${prune_build_directory}" \
-    --target toolchain-cmake-prune toolchain-dosfstools-prune toolchain-llvm-prune >/dev/null
+    --target toolchain-cmake-prune toolchain-dosfstools-prune \
+        toolchain-mtools-prune toolchain-llvm-prune >/dev/null
 cmake -S "${repo_root}" -B "${prune_build_directory}" -DREAVEROS_ENABLE_UNIT_TESTS=ON >/dev/null
 if [[ ! -f ${llvm_stamp_directory}/toolchain-llvm-download \
     || ${llvm_stamp_directory}/toolchain-llvm-download -ot ${llvm_stamp_directory}/toolchain-llvm-mkdir \
@@ -78,7 +79,7 @@ then
     printf 'Pruning made LLVM download run again in the validation image.\n' >&2
     exit 1
 fi
-for project in toolchain-cmake toolchain-dosfstools toolchain-llvm
+for project in toolchain-cmake toolchain-dosfstools toolchain-mtools toolchain-llvm
 do
     stamp_directory="${prune_build_directory}/toolchain/${project}-prefix/src/${project}-stamp"
     source_step=set-to-tag
@@ -101,49 +102,79 @@ do
         printf 'Pruning left the %s disconnected source steps out of date.\n' "${project}" >&2
         exit 1
     fi
+    if [[ ! -f ${stamp_directory}/${project}-invalidate-build \
+        || ${stamp_directory}/${project}-invalidate-build -ot \
+            ${prune_build_directory}/toolchain/${project}-source-inputs ]]
+    then
+        printf 'Pruning left the %s source identity step out of date.\n' "${project}" >&2
+        exit 1
+    fi
+    if ! grep --fixed-strings --quiet 'toolchain/invalidate-stale-build' \
+        "${prune_build_directory}/toolchain/CMakeFiles/${project}-install.dir/build.make"
+    then
+        printf 'The %s build omits source identity validation.\n' "${project}" >&2
+        exit 1
+    fi
 done
 
-llvm_binary_directory="${prune_build_directory}/toolchain/toolchain-llvm-prefix/src/toolchain-llvm-build"
-llvm_identity_file="${prune_build_directory}/toolchain/toolchain-llvm-source-identity"
-llvm_revision=$(sed -nE 's/^set\(REAVEROS_LLVM_REVISION ([0-9a-f]{40})\)$/\1/p' \
-    "${repo_root}/toolchain/config.cmake")
-llvm_digest=$(sed -nE 's/^set\(REAVEROS_LLVM_SOURCE_SHA256 ([0-9a-f]{64})\)$/\1/p' \
-    "${repo_root}/toolchain/config.cmake")
-llvm_invalidator="${repo_root}/toolchain/invalidate-stale-llvm-build"
-bash "${llvm_invalidator}" "${prune_build_directory}" "${llvm_binary_directory}" \
-    "${llvm_revision}" "${llvm_digest}"
-if [[ $(<"${llvm_identity_file}") != "${llvm_revision}:${llvm_digest}" ]]
-then
-    printf 'The LLVM source identity was not recorded.\n' >&2
-    exit 1
-fi
-mkdir -p "${llvm_binary_directory}"
-touch "${llvm_binary_directory}/preserve-on-same-source"
+invalidator="${repo_root}/toolchain/invalidate-stale-build"
+for project in toolchain-cmake toolchain-dosfstools toolchain-mtools toolchain-llvm
+do
+    binary_directory="${prune_build_directory}/toolchain/${project}-prefix/src/${project}-build"
+    identity_file="${prune_build_directory}/toolchain/${project}-source-identity"
+    identity=$(<"${prune_build_directory}/toolchain/${project}-source-inputs")
+    bash "${invalidator}" "${prune_build_directory}" "${project}" \
+        "${binary_directory}" "${identity}"
+    if [[ $(<"${identity_file}") != "${identity}" ]]
+    then
+        printf 'The %s source identity was not recorded.\n' "${project}" >&2
+        exit 1
+    fi
+    mkdir -p "${binary_directory}"
+    touch "${binary_directory}/preserve-on-same-source"
+done
 cmake -S "${repo_root}" -B "${prune_build_directory}" -DREAVEROS_ENABLE_UNIT_TESTS=ON >/dev/null
-if [[ ! -f ${llvm_binary_directory}/preserve-on-same-source ]]
+for project in toolchain-cmake toolchain-dosfstools toolchain-mtools toolchain-llvm
+do
+    binary_directory="${prune_build_directory}/toolchain/${project}-prefix/src/${project}-build"
+    identity_file="${prune_build_directory}/toolchain/${project}-source-identity"
+    identity=$(<"${prune_build_directory}/toolchain/${project}-source-inputs")
+    if [[ ! -f ${binary_directory}/preserve-on-same-source ]]
+    then
+        printf 'Configuring a probe discarded the cached %s build.\n' "${project}" >&2
+        exit 1
+    fi
+    bash "${invalidator}" "${prune_build_directory}" "${project}" \
+        "${binary_directory}" "${identity}"
+    if [[ ! -f ${binary_directory}/preserve-on-same-source ]]
+    then
+        printf 'An unchanged %s source discarded its binary directory.\n' "${project}" >&2
+        exit 1
+    fi
+    printf 'old source identity\n' > "${identity_file}"
+    bash "${invalidator}" "${prune_build_directory}" "${project}" \
+        "${binary_directory}" "${identity}"
+    if [[ -e ${binary_directory}/preserve-on-same-source \
+        || ! -d ${binary_directory} ]]
+    then
+        printf 'A changed %s source retained stale outputs or removed its build directory.\n' \
+            "${project}" >&2
+        exit 1
+    fi
+    rmdir "${binary_directory}"
+    bash "${invalidator}" "${prune_build_directory}" "${project}" \
+        "${binary_directory}" "${identity}"
+    if [[ ! -d ${binary_directory} ]]
+    then
+        printf 'An unchanged %s source did not restore its pruned build directory.\n' \
+            "${project}" >&2
+        exit 1
+    fi
+done
+if bash "${invalidator}" "${prune_build_directory}" toolchain-llvm \
+    "${prune_build_directory}" "${identity}" >/dev/null 2>&1
 then
-    printf 'Configuring a probe discarded the cached LLVM binary directory.\n' >&2
-    exit 1
-fi
-bash "${llvm_invalidator}" "${prune_build_directory}" "${llvm_binary_directory}" \
-    "${llvm_revision}" "${llvm_digest}"
-if [[ ! -f ${llvm_binary_directory}/preserve-on-same-source ]]
-then
-    printf 'An unchanged LLVM source discarded its binary directory.\n' >&2
-    exit 1
-fi
-printf 'old source identity\n' > "${llvm_identity_file}"
-bash "${llvm_invalidator}" "${prune_build_directory}" "${llvm_binary_directory}" \
-    "${llvm_revision}" "${llvm_digest}"
-if [[ -e ${llvm_binary_directory}/preserve-on-same-source ]]
-then
-    printf 'A changed LLVM source retained stale build outputs.\n' >&2
-    exit 1
-fi
-if bash "${llvm_invalidator}" "${prune_build_directory}" "${prune_build_directory}" \
-    "${llvm_revision}" "${llvm_digest}" >/dev/null 2>&1
-then
-    printf 'The LLVM build invalidator accepted a broad target.\n' >&2
+    printf 'The toolchain build invalidator accepted a broad target.\n' >&2
     exit 1
 fi
 
