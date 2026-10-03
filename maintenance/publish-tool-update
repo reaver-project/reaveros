@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $# -ne 1 \
+    || ! $1 =~ ^maintenance/update/(cmake|llvm|dosfstools|mtools)/main/[A-Za-z0-9._-]+$ ]]
+then
+    printf 'usage: %s maintenance/update/<tool>/main/<version>\n' "$0" >&2
+    exit 2
+fi
+
+update_branch=$1
+tool=${update_branch#maintenance/update/}
+tool=${tool%%/*}
+self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+repo_root=$(cd -- "${self_dir}/.." && pwd)
+source "${self_dir}/update-common.sh"
+
+if [[ $(git -C "${repo_root}" branch --show-current) != main ]]
+then
+    printf 'Maintenance publication must start on main.\n' >&2
+    exit 1
+fi
+update_require_clean_worktree "${repo_root}"
+if ! git -C "${repo_root}" show-ref --verify --quiet "refs/heads/${update_branch}"
+then
+    printf 'Prepared update branch does not exist: %s\n' "${update_branch}" >&2
+    exit 1
+fi
+
+body_file=$(update_make_temp_file "pr-body-${tool}")
+cleanup()
+{
+    git -C "${repo_root}" switch main > /dev/null 2>&1 \
+        || printf 'Could not return to main after publication.\n' >&2
+    rm -f "${body_file}"
+}
+trap cleanup EXIT
+
+git -C "${repo_root}" switch "${update_branch}" > /dev/null
+pr_title=$(git -C "${repo_root}" log -1 --format=%s)
+git -C "${repo_root}" log -1 --format=%b > "${body_file}"
+published_revision=$("${self_dir}/publish-signed-update" \
+    "${repo_root}" "${update_branch}" main)
+update_upsert_pr "${update_branch}" main "${pr_title}" "${body_file}"
+
+state_path="maintenance/update-state/${tool}.state"
+if [[ -f ${repo_root}/${state_path} ]]
+then
+    pr_data=$(gh -R reaver-project/reaveros pr view "${update_pr_number}" --json labels)
+    blocked_message='A tool patch refresh remains unresolved; repair the state file before merging.'
+    if grep --fixed-strings --quiet '|redundant' "${repo_root}/${state_path}"
+    then
+        blocked_message='A patch is already upstream. Remove its file and toolchain build-definition reference in a separate reviewed PR targeting main, then rerun maintenance to supersede this blocked PR.'
+    fi
+    update_mark_pr_blocked \
+        reaver-project/reaveros \
+        "${update_pr_number}" \
+        "${pr_data}" \
+        "${blocked_message}"
+    printf 'Published a blocked %s tool update; manual patch repair is required.\n' \
+        "${tool}" >&2
+    exit 1
+fi
+
+pr_data=$(gh -R reaver-project/reaveros pr view "${update_pr_number}" --json labels)
+if jq --exit-status '.labels | any(.name == "automatic: blocked")' \
+    <<< "${pr_data}" > /dev/null
+then
+    gh -R reaver-project/reaveros pr edit "${update_pr_number}" \
+        --remove-label "automatic: blocked"
+fi
+update_enable_auto_merge "${update_pr_number}" "${published_revision}"

@@ -9,3 +9,4 @@ tools
 build
 compile_flags.txt
 tags
+maintenance/copilot/node_modules

@@ -131,7 +131,7 @@ jobs:
                 base-revision: ${{ steps.contract.outputs.base_revision }}
 
     toolchain-update-state:
-        name: Fail quickly on unresolved toolchain patch refresh
+        name: Fail quickly on unresolved tool patches
         if: needs.authorize.outputs.approved == 'true'
         needs:
           - authorize
@@ -147,7 +147,7 @@ jobs:
                 ref: ${{ needs.authorize.outputs.source_sha }}
                 persist-credentials: false
 
-          - name: Validate toolchain update state
+          - name: Validate pending tool updates
             run: |
                 set -euo pipefail
                 unresolved=0
@@ -226,6 +226,7 @@ jobs:
                 ./docker/test-build-toolchain-probe
                 ./docker/test-update-images-probe
                 ./ci/test-build-image
+                ./maintenance/test-update-toolchain
 
           - name: Compile the requested matrix
             id: matrix
@@ -383,7 +384,7 @@ jobs:
 
                 if [[ ${TOOLCHAIN_STATE_RESULT} != success ]]
                 then
-                    printf '::error::The toolchain update-state check finished with %s.\n' "${TOOLCHAIN_STATE_RESULT}"
+                    printf '::error::The tool-update state check finished with %s.\n' "${TOOLCHAIN_STATE_RESULT}"
                     exit 1
                 fi
 

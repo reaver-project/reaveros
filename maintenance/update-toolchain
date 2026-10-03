@@ -1,51 +1,74 @@
 #!/usr/bin/env bash
 
-set -e
+set -euo pipefail
 
-pr=""
+function usage() {
+    cat <<EOF
+Usage:
+    update-toolchain [--check|--commit|--pr] [tool...]
 
-if [[ $# == 1 ]]
-then
-    if [[ $1 == "--pr" ]]
-    then
-        echo "Will open PRs."
-        pr="--pr"
-    elif [[ $1 == "--check" ]]
-    then
-        echo "Will check for new versions."
-    elif [[ $1 == "--help" || $1 == "-h" ]]
-    then
-        echo "Usage:"
-        echo "    update-toolchain [--pr|--check]"
-        echo ""
-        echo "Options:"
-        echo "    --pr          open Github PRs to bump the toolchain versions."
-        echo "    --check       print possible toolchain updates only."
-        exit 0
-    else
-        echo "Unknown argument: $1."
-        exit 1
-    fi
-fi
+Options:
+    --check       print available updates for toolchain tools (default).
+    --commit      create or update maintenance branch commits.
+    --pr          implies --commit; also pushes and creates or updates PRs.
 
-if [[ $# -gt 1 ]]
-then
-    echo "Too many arguments."
-    exit 1
-fi
+Tools:
+    cmake, llvm, dosfstools, mtools (all by default)
+EOF
+}
+
+mode="--check"
+mode_set=0
+requested_tools=()
+
+while [[ $# -gt 0 ]]
+do
+    case "$1" in
+        --check|--commit|--pr)
+            if [[ ${mode_set} -eq 1 && "${mode}" != "$1" ]]
+            then
+                echo "Only one mode may be specified."
+                usage
+                exit 1
+            fi
+            mode="$1"
+            mode_set=1
+            ;;
+        cmake|llvm|dosfstools|mtools)
+            requested_tools+=("$1")
+            ;;
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Unknown argument: $1."
+            usage
+            exit 1
+            ;;
+    esac
+    shift
+done
 
 source_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 
-git_toolchain_elementss=(
-    cmake
-    llvm
-    dosfstools
-)
+if [[ ${#requested_tools[@]} -eq 0 ]]
+then
+    requested_tools=(cmake llvm dosfstools mtools)
+fi
 
-for toolchain in ${git_toolchain_elementss[@]}
+extra_args=()
+if [[ "${mode}" != "--check" ]]
+then
+    extra_args=("${mode}")
+fi
+
+for tool in "${requested_tools[@]}"
 do
-    "${source_dir}/update.git.sh" ${toolchain} ${pr}
+    if [[ "${tool}" == "mtools" ]]
+    then
+        "${source_dir}/update-mtools.sh" "${extra_args[@]}"
+    else
+        "${source_dir}/update-git.sh" "${tool}" "${extra_args[@]}"
+    fi
 done
-
-"${source_dir}/update-mtools.sh" ${pr}
-

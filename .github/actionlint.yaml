@@ -2,3 +2,9 @@ self-hosted-runner:
     labels:
       - reaveros-aws
       - reaveros-*
+
+paths:
+    .github/workflows/daily-maintenance.yml:
+        ignore:
+          # actionlint v1.7.12 predates GitHub's Copilot Requests permission.
+          - '^unknown permission scope "copilot-requests"\.'
