@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.12)
+cmake_minimum_required(VERSION 3.31)
 
 if (NOT DEFINED TEST_DIRECTORY)
     message(FATAL_ERROR "TEST_DIRECTORY is required")

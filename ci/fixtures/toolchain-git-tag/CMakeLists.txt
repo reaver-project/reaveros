@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.28)
+cmake_minimum_required(VERSION 3.31)
 project(toolchain-git-tag-test NONE)
 
 include(ExternalProject)
