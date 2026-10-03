@@ -59,4 +59,43 @@ then
     exit 1
 fi
 
+fixture_source="${self_dir}/fixtures/toolchain-git-tag"
+fixture_build="${test_directory}/build"
+fixture_source_root=$(cd -- "${self_dir}/.." && pwd)
+cmake -S "${fixture_source}" -B "${fixture_build}" \
+    -DREAVEROS_SOURCE_DIR="${fixture_source_root}" \
+    -DTEST_REMOTE="file://${test_directory}/remote" \
+    -DTEST_TAG=v1 -DTEST_REVISION="${first_revision}" > /dev/null
+cmake --build "${fixture_build}" --target example-install > /dev/null
+fixture_checkout="${fixture_build}/example-prefix/src/example"
+if [[ $(git -C "${fixture_checkout}" rev-parse HEAD) != "${first_revision}" ]]
+then
+    printf 'The fixture did not check out its first tag.\n' >&2
+    exit 1
+fi
+
+# Simulate an older cached image whose stamp graph used a versioned step.
+rm "${fixture_build}/toolchain/example-tag-inputs"
+touch "${fixture_build}/example-prefix/src/example-stamp/example-force-download-v1"
+
+cmake -E sleep 1.1
+cmake -S "${fixture_source}" -B "${fixture_build}" \
+    -DREAVEROS_SOURCE_DIR="${fixture_source_root}" \
+    -DTEST_REMOTE="file://${test_directory}/remote" \
+    -DTEST_TAG=v2 -DTEST_REVISION="${second_revision}" > /dev/null
+cmake --build "${fixture_build}" --target example-install -- -n > /dev/null
+cmake --build "${fixture_build}" --target example-install > /dev/null
+if [[ $(git -C "${fixture_checkout}" rev-parse HEAD) != "${second_revision}" ]]
+then
+    printf 'Reconfiguring an existing build did not fetch its new tag.\n' >&2
+    exit 1
+fi
+
+if cmake --build "${fixture_build}" --target example-install -- -n \
+    | grep --fixed-strings --quiet "Performing set-to-tag step"
+then
+    printf 'An unchanged tag needlessly rebuilt the source step.\n' >&2
+    exit 1
+fi
+
 printf 'Toolchain Git tag tests passed.\n'

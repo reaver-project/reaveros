@@ -250,19 +250,6 @@ function(reaveros_add_ep_prune_target external_project)
         set(source_step set-to-tag)
     endif()
 
-    get_property(has_git_tag TARGET ${external_project} PROPERTY _EP_GIT_TAG SET)
-    if (has_git_tag)
-        get_property(GIT_TAG TARGET ${external_project} PROPERTY _EP_GIT_TAG)
-        set(force_download_stamp_rm_cmd
-            find ${STAMP_DIR}
-                -name "${external_project}-force-download-*"
-                ! -name "${external_project}-force-download-${GIT_TAG}"
-                -delete
-        )
-    else()
-        set(force_download_stamp_rm_cmd true)
-    endif()
-
     file(TOUCH ${STAMP_DIR}/${external_project}-skip-update)
     file(TOUCH ${STAMP_DIR}/${external_project}-configure)
     file(TOUCH ${STAMP_DIR}/${external_project}-build)
@@ -271,7 +258,6 @@ function(reaveros_add_ep_prune_target external_project)
     # The pruned source checkout cannot run apply-patches again.
     set(_commands
         COMMAND rm -rf <SOURCE_DIR> <BINARY_DIR>
-        COMMAND ${force_download_stamp_rm_cmd}
         COMMAND rm -rf ${STAMP_DIR}/${external_project}-gitclone-lastrun.txt
         COMMAND touch ${STAMP_DIR}/${external_project}-${source_step}
         COMMAND touch ${STAMP_DIR}/${external_project}-skip-update
@@ -305,30 +291,24 @@ endfunction()
 function(reaveros_add_ep_fetch_tag_target external_project revision)
     ExternalProject_Get_Property(${external_project} STAMP_DIR GIT_TAG)
 
+    set(tag_dependency "${REAVEROS_BINARY_DIR}/toolchain/${external_project}-tag-inputs")
+    set(tag_inputs "${GIT_TAG}:${revision}\n")
+    if (EXISTS "${tag_dependency}")
+        file(READ "${tag_dependency}" previous_tag_inputs)
+    else()
+        set(previous_tag_inputs "")
+    endif()
+    if (NOT previous_tag_inputs STREQUAL tag_inputs)
+        file(WRITE "${tag_dependency}" "${tag_inputs}")
+    endif()
+
     ExternalProject_Add_Step(${external_project}
         set-to-tag
         COMMAND bash ${REAVEROS_SOURCE_DIR}/toolchain/ensure-git-tag
             <SOURCE_DIR> ${GIT_TAG} ${revision}
         DEPENDEES download
         DEPENDERS update patch configure build
-        EXCLUDE_FROM_MAIN TRUE
-        INDEPENDENT TRUE
-    )
-
-    file(GLOB force_download_stamps ${STAMP_DIR}/${external_project}-force-download-*)
-    list(REMOVE_ITEM force_download_stamps ${STAMP_DIR}/${external_project}-force-download-${GIT_TAG})
-
-    ExternalProject_Add_Step(${external_project}
-        force-download-${GIT_TAG}
-        COMMAND find ${STAMP_DIR}
-            -name "${external_project}-force-download-*"
-            ! -name "${external_project}-force-download-${GIT_TAG}"
-            -delete
-        COMMAND rm -rf ${STAMP_DIR}/${external_project}-mkdir
-        COMMAND rm -rf ${STAMP_DIR}/${external_project}-download
-        COMMAND rm -rf ${STAMP_DIR}/${external_project}-gitclone-lastrun.txt
-        COMMAND rm -rf ${STAMP_DIR}/${external_project}-configure
-        DEPENDERS mkdir download update patch set-to-tag prune
+        DEPENDS ${tag_dependency}
         EXCLUDE_FROM_MAIN TRUE
         INDEPENDENT TRUE
     )
