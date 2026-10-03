@@ -11,7 +11,7 @@ ReaverOS' build system bootstraps most tools that it uses as build tools, but no
 on themselves. That being said, we are trying to keep the dependencies of the build system to a minimum. Currently, those
 dependencies are:
 
-* CMake (3.12 or higher);
+* CMake (3.31 or higher);
 * Python (3.7 or higher);
 * Git;
 * Bison;
@@ -21,10 +21,11 @@ dependencies are:
 * C and C++ compilers;
 * Make.
 
-On a recent apt-based systems, the following command should fulfill the dependencies:
+On Debian Trixie, or another apt-based system providing CMake 3.31 or newer,
+the following command should fulfill the dependencies:
 
 ```
-apt install build-essential automake cmake git python3 bison flex libssl-dev
+apt install build-essential automake cmake git python3 bison flex cpio libssl-dev xz-utils
 ```
 
 ### Build considerations

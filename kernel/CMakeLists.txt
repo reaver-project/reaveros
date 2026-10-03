@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.31)
 project(reaveros-kernel ASM CXX)
 
 if (NOT REAVEROS_ENABLE_UNIT_TESTS)

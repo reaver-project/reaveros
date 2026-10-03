@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.12)
+cmake_minimum_required(VERSION 3.31)
 project(reaveros-meta C CXX)
 
 set(REAVEROS_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
@@ -32,17 +32,9 @@ if (NOT GIT_EXECUTABLE OR NOT GIT_VERSION_STRING)
     endif()
 endif()
 
-if (${CMAKE_VERSION} VERSION_GREATER_EQUAL 3.19)
-    cmake_policy(SET CMP0113 NEW)
-    cmake_policy(SET CMP0114 NEW)
-endif()
 include(ExternalProject)
 
-if (${CMAKE_VERSION} VERSION_GREATER_EQUAL 3.20)
-    set(_REAVEROS_CONFIGURE_HANDLED_BY_BUILD CONFIGURE_HANDLED_BY_BUILD TRUE)
-else()
-    set(_REAVEROS_CONFIGURE_HANDLED_BY_BUILD "")
-endif()
+set(_REAVEROS_CONFIGURE_HANDLED_BY_BUILD CONFIGURE_HANDLED_BY_BUILD TRUE)
 
 set(REAVEROS_ARCHITECTURES "amd64" CACHE STRING "List of architectures to build for. Possible values: amd64.")
 set(REAVEROS_LOADERS "uefi" CACHE STRING "List of loaders to build images with. Possible values: uefi (amd64 only).")

@@ -68,7 +68,7 @@ llvm_stamp_directory="${prune_build_directory}/toolchain/toolchain-llvm-prefix/s
 touch "${llvm_stamp_directory}/toolchain-llvm-mkdir"
 touch "${llvm_stamp_directory}/toolchain-llvm-download"
 cmake --build "${prune_build_directory}" \
-    --target toolchain-cmake-prune toolchain-llvm-prune >/dev/null
+    --target toolchain-cmake-prune toolchain-dosfstools-prune toolchain-llvm-prune >/dev/null
 cmake -S "${repo_root}" -B "${prune_build_directory}" -DREAVEROS_ENABLE_UNIT_TESTS=ON >/dev/null
 if [[ ! -f ${llvm_stamp_directory}/toolchain-llvm-download \
     || ${llvm_stamp_directory}/toolchain-llvm-download -ot ${llvm_stamp_directory}/toolchain-llvm-mkdir \
@@ -78,7 +78,7 @@ then
     printf 'Pruning made LLVM download run again in the validation image.\n' >&2
     exit 1
 fi
-for project in toolchain-cmake toolchain-llvm
+for project in toolchain-cmake toolchain-dosfstools toolchain-llvm
 do
     stamp_directory="${prune_build_directory}/toolchain/${project}-prefix/src/${project}-stamp"
     source_step=set-to-tag
@@ -91,6 +91,14 @@ do
         || ${stamp_directory}/${project}-apply-patches -ot ${prune_build_directory}/toolchain/${project}-patch-inputs ]]
     then
         printf 'Pruning left the %s patch step out of date.\n' "${project}" >&2
+        exit 1
+    fi
+    if [[ ! -f ${stamp_directory}/${project}-update_disconnected \
+        || ! -f ${stamp_directory}/${project}-patch_disconnected \
+        || ${stamp_directory}/${project}-update_disconnected -ot ${stamp_directory}/${project}-${source_step} \
+        || ${stamp_directory}/${project}-patch_disconnected -ot ${stamp_directory}/${project}-update_disconnected ]]
+    then
+        printf 'Pruning left the %s disconnected source steps out of date.\n' "${project}" >&2
         exit 1
     fi
 done
