@@ -72,6 +72,7 @@ done
 "${repo_root}/ci/aws/test-strip-ecr-registry"
 "${self_dir}/test-toolchain-git-tag"
 "${self_dir}/test-toolchain-failure-recovery"
+"${self_dir}/test-toolchain-helper-inputs"
 "${self_dir}/test-toolchain-git-archive"
 cmake -DTEST_DIRECTORY="${test_directory}/patch-dependencies" \
     -P "${self_dir}/test-toolchain-patch-dependencies.cmake"
@@ -110,10 +111,26 @@ do
     fi
     if [[ ! -f ${stamp_directory}/${project}-update_disconnected \
         || ! -f ${stamp_directory}/${project}-patch_disconnected \
-        || ${stamp_directory}/${project}-update_disconnected -ot ${stamp_directory}/${project}-${source_step} \
         || ${stamp_directory}/${project}-patch_disconnected -ot ${stamp_directory}/${project}-update_disconnected ]]
     then
         printf 'Pruning left the %s disconnected source steps out of date.\n' "${project}" >&2
+        exit 1
+    fi
+    if [[ ${project} == toolchain-llvm ]]
+    then
+        # Hydration depends on the connected update/patch steps; Git tag
+        # selection instead precedes the disconnected update/patch chain.
+        if [[ ! -f ${stamp_directory}/${project}-update \
+            || ! -f ${stamp_directory}/${project}-patch \
+            || ${stamp_directory}/${project}-${source_step} -ot ${stamp_directory}/${project}-update \
+            || ${stamp_directory}/${project}-${source_step} -ot ${stamp_directory}/${project}-patch ]]
+        then
+            printf 'Pruning left LLVM hydration older than its source prerequisites.\n' >&2
+            exit 1
+        fi
+    elif [[ ${stamp_directory}/${project}-update_disconnected -ot ${stamp_directory}/${project}-${source_step} ]]
+    then
+        printf 'Pruning left the %s disconnected update step older than tag selection.\n' "${project}" >&2
         exit 1
     fi
     if [[ ! -f ${stamp_directory}/${project}-invalidate-build \

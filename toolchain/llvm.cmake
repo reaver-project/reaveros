@@ -82,6 +82,7 @@ set(patch_files
 reaveros_patch_dependency(
     patch_dependency toolchain-llvm
     ${REAVEROS_LLVM_REVISION}-${REAVEROS_LLVM_SOURCE_SHA256} ${patch_files}
+    "${REAVEROS_SOURCE_DIR}/toolchain/hydrate-git-archive"
 )
 
 string(REGEX REPLACE "^llvmorg-" "" _llvm_source_version "${REAVEROS_LLVM_TAG}")
@@ -123,6 +124,7 @@ ExternalProject_Add(toolchain-llvm
         -DLLVM_INCLUDE_TESTS=OFF
         -DLLVM_INCLUDE_EXAMPLES=OFF
 )
+_reaveros_add_ep_file_dependencies(toolchain-llvm download ${patch_dependency})
 ExternalProject_Add_Step(toolchain-llvm
     hydrate-source
     COMMAND bash ${REAVEROS_SOURCE_DIR}/toolchain/hydrate-git-archive
@@ -147,6 +149,7 @@ ExternalProject_Add_Step(toolchain-llvm
 )
 reaveros_add_ep_prune_target(toolchain-llvm
     SOURCE_STEP hydrate-source
+    SOURCE_STEP_AFTER_PATCH
     REMOVE_DOWNLOADED_ARCHIVE
 )
 

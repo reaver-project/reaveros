@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+
+import hashlib
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+from threading import Thread
+
+
+repository = Path(__file__).resolve().parent.parent
+helpers = ("ensure-git-tag", "hydrate-git-archive", "invalidate-stale-build")
+projects = ("toolchain-git", "toolchain-archive", "toolchain-extract")
+
+
+def run(*command):
+    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    if result.returncode:
+        raise RuntimeError(result.stdout)
+    return result.stdout
+
+
+with tempfile.TemporaryDirectory() as temporary:
+    directory = Path(temporary)
+    upstream = directory / "upstream"
+    remote = directory / "remote"
+    run("git", "init", "--quiet", str(upstream))
+    (upstream / "source").write_text("fixture input\n")
+    run("git", "-C", str(upstream), "add", "source")
+    run("git", "-C", str(upstream), "-c", "commit.gpgsign=false",
+        "-c", "core.hooksPath=/dev/null", "-c", "user.name=test",
+        "-c", "user.email=test@example.invalid", "commit", "--quiet", "-m", "fixture")
+    run("git", "-C", str(upstream), "-c", "tag.gpgSign=false", "tag", "fixture")
+    revision = run("git", "-C", str(upstream), "rev-parse", "HEAD").strip()
+    run("git", "clone", "--bare", "--quiet", str(upstream), str(remote))
+    run("git", "-C", str(remote), "config", "uploadpack.allowFilter", "true")
+    archive = directory / "fixture.tar"
+    run("git", "-C", str(upstream), "archive", "--prefix=fixture/",
+        "--format=tar", "-o", str(archive), "HEAD")
+    archive_hash = hashlib.sha256(archive.read_bytes()).hexdigest()
+
+    class ArchiveHandler(SimpleHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0),
+        partial(ArchiveHandler, directory=str(directory)))
+    Thread(target=server.serve_forever, daemon=True).start()
+    archive_url = "http://127.0.0.1:{}/fixture.tar".format(server.server_port)
+    source = directory / "helpers"
+    (source / "toolchain").mkdir(parents=True)
+    for helper in helpers:
+        shutil.copyfile(repository / "toolchain" / helper, source / "toolchain" / helper)
+    build = directory / "build"
+    run("cmake", "-S", str(repository / "ci/fixtures/toolchain-helper-inputs"),
+        "-B", str(build), "-G", "Unix Makefiles", "-DTEST_REPOSITORY=" + str(repository),
+        "-DTEST_HELPERS=" + str(source), "-DTEST_REMOTE=" + remote.as_uri(),
+        "-DTEST_REVISION=" + revision, "-DTEST_ARCHIVE=" + archive_url,
+        "-DTEST_ARCHIVE_HASH=" + archive_hash)
+
+    def build_projects():
+        return run("cmake", "--build", str(build), "--target",
+                   *(project + "-install" for project in projects), "--parallel", "4")
+
+    def assert_steps(output, expected):
+        for step in expected:
+            if "Performing " + step + " step" not in output:
+                raise AssertionError(output)
+
+    def assert_idle(output):
+        if "Performing " in output:
+            raise AssertionError(output)
+
+    build_projects()
+    assert_idle(build_projects())
+    for helper in helpers:
+        os.utime(source / "toolchain" / helper, None)
+    assert_idle(build_projects())
+
+    for helper, expected in (
+        ("ensure-git-tag", ("set-to-tag",)),
+        ("hydrate-git-archive", ("hydrate-source",)),
+        ("invalidate-stale-build", ("invalidate-build",)),
+    ):
+        helper_file = source / "toolchain" / helper
+        with helper_file.open("a") as stream:
+            stream.write("\n# changed helper input\n")
+        assert_steps(build_projects(), expected)
+        assert_idle(build_projects())
+
+    for helper in helpers:
+        run("cmake", "--build", str(build), "--target", "all-toolchain-prune", "--parallel", "4")
+        assert_idle(build_projects())
+        for unchanged in helpers:
+            os.utime(source / "toolchain" / unchanged, None)
+        assert_idle(build_projects())
+        with (source / "toolchain" / helper).open("a") as stream:
+            stream.write("\n# changed helper after pruning\n")
+        output = build_projects()
+        expected = {"ensure-git-tag": "set-to-tag", "hydrate-git-archive": "hydrate-source",
+                    "invalidate-stale-build": "invalidate-build"}[helper]
+        assert_steps(output, (expected,))
+        for project in projects:
+            assert (build / "install/toolchain" / project[len("toolchain-"):] / "installed").exists()
+        assert_idle(build_projects())
+
+    server.shutdown()
+    server.server_close()
+
+print("Toolchain helper-input and pruned-recovery tests passed.")
