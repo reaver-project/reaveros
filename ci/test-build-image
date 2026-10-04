@@ -70,6 +70,7 @@ done
 "${repo_root}/ci/test-cache-launcher"
 "${repo_root}/ci/aws/test-strip-ecr-registry"
 "${self_dir}/test-toolchain-git-tag"
+"${self_dir}/test-toolchain-failure-recovery"
 "${self_dir}/test-toolchain-git-archive"
 cmake -DTEST_DIRECTORY="${test_directory}/patch-dependencies" \
     -P "${self_dir}/test-toolchain-patch-dependencies.cmake"

@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+repo_root=$(git -C "${self_dir}" rev-parse --show-toplevel)
+test_directory=$(mktemp -d)
+trap 'rm -rf -- "${test_directory}"' EXIT
+
+fixture_source=${test_directory}/fixture
+mkdir -p "${fixture_source}/source"
+printf 'fixture input\n' > "${fixture_source}/source/input"
+
+cat > "${fixture_source}/CMakeLists.txt" <<'CMAKE'
+cmake_minimum_required(VERSION 3.31)
+project(toolchain-failure-recovery-test NONE)
+
+include(ExternalProject)
+include("${REAVEROS_SOURCE_DIR}/cmake/target_functions.cmake")
+add_custom_target(all-toolchain-prune)
+
+set(step_args
+    "-DTEST_BUILD_DIR=<BINARY_DIR>"
+    "-DTEST_INSTALL_DIR=<INSTALL_DIR>"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/step.cmake"
+)
+ExternalProject_Add(example
+    SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/source"
+    DOWNLOAD_COMMAND ""
+    UPDATE_DISCONNECTED TRUE
+    STEP_TARGETS install
+    CONFIGURE_COMMAND "${CMAKE_COMMAND}" -DTEST_STEP=configure ${step_args}
+    BUILD_COMMAND "${CMAKE_COMMAND}" -DTEST_STEP=build ${step_args}
+    INSTALL_COMMAND "${CMAKE_COMMAND}" -DTEST_STEP=install ${step_args}
+)
+reaveros_add_ep_prune_target(example)
+CMAKE
+
+cat > "${fixture_source}/step.cmake" <<'CMAKE'
+if (EXISTS "${TEST_BUILD_DIR}/fail-${TEST_STEP}")
+    message(FATAL_ERROR "Intentional ${TEST_STEP} failure")
+endif()
+if (TEST_STEP STREQUAL "install")
+    file(WRITE "${TEST_INSTALL_DIR}/installed" "complete\n")
+endif()
+CMAKE
+
+configure_fixture()
+{
+    cmake -S "${fixture_source}" -B "${fixture_build}" -G 'Unix Makefiles' \
+        -DREAVEROS_SOURCE_DIR="${repo_root}" > /dev/null
+}
+
+expect_step_failure()
+{
+    if cmake --build "${fixture_build}" --target example-install --parallel 4 \
+        > "${test_directory}/build-log" 2>&1
+    then
+        printf 'The %s failure was hidden by successful step stamps.\n' "${step}" >&2
+        exit 1
+    fi
+    if ! grep --fixed-strings --quiet "Intentional ${step} failure" \
+        "${test_directory}/build-log"
+    then
+        cat "${test_directory}/build-log" >&2
+        printf 'The build failed before reaching its expected %s failure.\n' "${step}" >&2
+        exit 1
+    fi
+}
+
+for step in configure build install
+do
+    fixture_build=${test_directory}/${step}-build
+    configure_fixture
+    marker=${fixture_build}/example-prefix/src/example-build/fail-${step}
+    touch "${marker}"
+    expect_step_failure
+
+    configure_fixture
+    expect_step_failure
+
+    rm -- "${marker}"
+    cmake --build "${fixture_build}" --target example-install --parallel 4 > /dev/null
+    if [[ ! -f ${fixture_build}/example-prefix/installed ]]
+    then
+        printf 'Recovering from the %s failure did not install the fixture.\n' "${step}" >&2
+        exit 1
+    fi
+done
+
+printf 'Toolchain failure-recovery tests passed.\n'
