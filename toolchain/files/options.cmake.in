@@ -1,0 +1,58 @@
+include_guard(GLOBAL)
+
+# These options and definitions describe the selected target environment.
+# Keep them in the toolchain, independent of caller-provided cached flags.
+foreach (_option IN LISTS _reaveros_${REAVEROS_BUILD_MODE}_compile_options)
+    add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:${_option}>")
+endforeach()
+foreach (_option IN LISTS _reaveros_${REAVEROS_BUILD_MODE}_cxx_options)
+    add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:${_option}>")
+endforeach()
+foreach (_definition IN LISTS _reaveros_${REAVEROS_BUILD_MODE}_definitions)
+    add_compile_definitions("$<$<COMPILE_LANGUAGE:C,CXX>:${_definition}>")
+endforeach()
+add_compile_options("$<$<COMPILE_LANGUAGE:ASM>:-masm=intel>")
+if (REAVEROS_BUILD_MODE STREQUAL "freestanding")
+    add_compile_options("$<$<COMPILE_LANGUAGE:ASM>:-fPIC>")
+endif()
+
+if (REAVEROS_BUILD_MODE STREQUAL "uefi")
+    # ReaverOS does not load Windows-Clang's GNU-frontend linker wrapper.
+    foreach (_language IN ITEMS C CXX)
+        set(CMAKE_${_language}_LINKER_WRAPPER_FLAG "-Wl,")
+        set(CMAKE_${_language}_LINKER_WRAPPER_FLAG_SEP ",")
+    endforeach()
+    # CMake's ReaverOS platform does not emit the Windows compiler target
+    # through its normal Clang option table. It is required for every driver.
+    add_compile_options("--target=${triple}")
+    add_compile_options("$<$<COMPILE_LANGUAGE:ASM>:--sysroot=${CMAKE_SYSROOT}>")
+    # The Windows Clang option table under ReaverOS does not retain SYSTEM
+    # classification for standard include directories. Keep it explicit.
+    add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:SHELL:-isystem '${CMAKE_SYSROOT}/usr/include'>")
+elseif (REAVEROS_BUILD_MODE STREQUAL "tests")
+    set(CMAKE_C_STANDARD_INCLUDE_DIRECTORIES "${fake_sysroot}/usr/include")
+    set(CMAKE_CXX_STANDARD_INCLUDE_DIRECTORIES "${clang_target_dirs};${fake_sysroot}/usr/include")
+    add_link_options(-stdlib=libc++)
+    set(CMAKE_BUILD_RPATH "${libcxx_lib_dir}")
+
+    # Native C executables also consume the supplied C++ runtime. Standard
+    # C++ link rules already select this driver; only the C rule needs it.
+    set(CMAKE_C_LINK_EXECUTABLE
+        "<CMAKE_CXX_COMPILER> <FLAGS> <CMAKE_C_LINK_FLAGS> <LINK_FLAGS> <OBJECTS> -o <TARGET> <LINK_LIBRARIES>")
+endif()
+
+if (REAVEROS_BUILD_MODE STREQUAL "tests")
+    set(_reaveros_library_dir "${fake_sysroot}/usr/lib")
+else()
+    set(_reaveros_library_dir "${CMAKE_SYSROOT}/usr/lib")
+endif()
+add_link_options("$<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,EXECUTABLE>:-L${_reaveros_library_dir}>")
+foreach (_option IN LISTS _reaveros_${REAVEROS_BUILD_MODE}_executable_link_options)
+    add_link_options("$<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,EXECUTABLE>:${_option}>")
+endforeach()
+if (REAVEROS_BUILD_MODE STREQUAL "uefi")
+    add_link_options("$<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,EXECUTABLE>:--target=${triple}>")
+endif()
+
+list(APPEND CMAKE_PROJECT_INCLUDE "${CMAKE_CURRENT_LIST_DIR}/project-policy.cmake")
+list(REMOVE_DUPLICATES CMAKE_PROJECT_INCLUDE)

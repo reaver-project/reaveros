@@ -1,0 +1,27 @@
+include_guard(DIRECTORY)
+
+# Ordinary project policy is separate from the toolchain's ABI requirements.
+# Prepend defaults to the effective flags without modifying the user's cache;
+# compatible user options such as -Wno-error therefore retain their precedence.
+set(_reaveros_warnings "-Wall -Wextra -Wpedantic -Werror -Wno-unused-const-variable")
+if (REAVEROS_BUILD_MODE STREQUAL "tests")
+    string(APPEND _reaveros_warnings " -g")
+endif()
+foreach (_language IN ITEMS C CXX)
+    set(CMAKE_${_language}_FLAGS "${_reaveros_warnings} ${CMAKE_${_language}_FLAGS}")
+endforeach()
+
+if (NOT DEFINED CMAKE_C_STANDARD)
+    set(CMAKE_C_STANDARD @REAVEROS_C_STANDARD@)
+elseif (CMAKE_C_STANDARD LESS @REAVEROS_C_STANDARD@)
+    message(FATAL_ERROR "ReaverOS requires at least C@REAVEROS_C_STANDARD@")
+endif()
+if (NOT DEFINED CMAKE_CXX_STANDARD)
+    set(CMAKE_CXX_STANDARD @REAVEROS_CXX_STANDARD@)
+elseif (CMAKE_CXX_STANDARD LESS @REAVEROS_CXX_STANDARD@)
+    message(FATAL_ERROR "ReaverOS requires at least C++@REAVEROS_CXX_STANDARD@")
+endif()
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
+set(CMAKE_CXX_EXTENSIONS OFF)

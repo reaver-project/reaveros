@@ -4,6 +4,8 @@ set_directory_properties(
 )
 
 configure_file(targets.cmake "${REAVEROS_BINARY_DIR}/install/toolchain/files/targets.cmake" COPYONLY)
+configure_file("${REAVEROS_SOURCE_DIR}/cmake/project_policy.cmake.in"
+    "${REAVEROS_BINARY_DIR}/install/toolchain/files/project-policy.cmake" @ONLY)
 
 file(GLOB toolchain_files
     RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}/files

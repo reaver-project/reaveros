@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+
+import json
+import os
+from pathlib import Path
+import shlex
+import subprocess
+import sys
+import tempfile
+
+
+if len(sys.argv) != 2:
+    sys.exit("usage: test-toolchain-modes <configured superbuild with installed tools>")
+root = Path(sys.argv[1]).resolve()
+repository = Path(__file__).resolve().parent.parent
+cmake = root / "install/toolchain/cmake/bin/cmake"
+readobj = root / "install/toolchain/llvm/bin/llvm-readobj"
+
+
+def run(*command, env=None):
+    result = subprocess.run(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    if result.returncode:
+        raise RuntimeError(result.stdout)
+    return result.stdout
+
+
+with tempfile.TemporaryDirectory(prefix="mode checks with spaces ", dir=root) as temporary:
+    for mode in ("freestanding", "hosted", "uefi", "tests"):
+        for inputs in ("cache", "environment"):
+            build = Path(temporary) / (mode + "-" + inputs)
+            flags = {"C": "-DREAVEROS_USER_C=1 -Wno-error",
+                     "CXX": "-DREAVEROS_USER_CXX=1 -Wno-error",
+                     "ASM": "-Wa,--defsym,REAVEROS_USER_ASM=1"}
+            command = [str(cmake), "-S", str(repository / "ci/fixtures/toolchain-modes"),
+                "-B", str(build), "-G", "Unix Makefiles", "-DCMAKE_BUILD_TYPE=Release",
+                "-DCMAKE_TOOLCHAIN_FILE=" + str(root / "install/toolchain/files" / ("amd64-" + mode + ".cmake"))]
+            env = dict(os.environ)
+            if inputs == "cache":
+                command += ["-DCMAKE_" + lang + "_FLAGS=" + value for lang, value in flags.items()]
+            else:
+                for lang, value in flags.items():
+                    env["CXXFLAGS" if lang == "CXX" else lang + "FLAGS"] = value
+
+            run(*command, env=env)
+            run(str(cmake), "--build", str(build), "--parallel", "4")
+            records = json.loads((build / "compile_commands.json").read_text())
+            for record in records:
+                tokens = shlex.split(record["command"])
+                assert tokens.count("-Wall") == (0 if record["file"].endswith(".asm") else 1), tokens
+                if record["file"].endswith(".c"):
+                    assert "-DREAVEROS_USER_C=1" in tokens
+                elif record["file"].endswith(".cpp"):
+                    assert "-DREAVEROS_USER_CXX=1" in tokens
+                else:
+                    assert "-Wa,--defsym,REAVEROS_USER_ASM=1" in tokens
+            formats = run(str(readobj), "--file-headers", str(build / "libmode-probe.a"))
+            assert formats.count("Format: " + ("COFF-x86-64" if mode == "uefi" else "elf64-x86-64")) == 3, formats
+            cache = (build / "CMakeCache.txt").read_text()
+            for lang, value in flags.items():
+                assert "CMAKE_" + lang + "_FLAGS:STRING=" + value in cache, lang
+
+            # Reconfiguration preserves user cache values without accumulating policy.
+            before = records
+            run(*command, env=env)
+            assert json.loads((build / "compile_commands.json").read_text()) == before
+            run(str(cmake), "--build", str(build), "--parallel", "4")
+            print(mode + " " + inputs + ": compile flags, ABI formats, and reconfiguration passed", flush=True)
+
+print("All four toolchain modes preserve caller flags and target ABI requirements.")
