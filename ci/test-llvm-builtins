@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import tempfile
+
+
+repository = Path(__file__).resolve().parent.parent
+fixture = repository / "ci/fixtures/llvm-builtins"
+version = re.search(r"REAVEROS_LLVM_TAG llvmorg-(\d+)",
+    (repository / "toolchain/config.cmake").read_text()).group(1)
+
+
+def run(*command):
+    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    if result.returncode:
+        raise RuntimeError(result.stdout)
+    if "jobserver unavailable" in result.stdout:
+        raise AssertionError(result.stdout)
+    return result.stdout
+
+
+with tempfile.TemporaryDirectory() as temporary:
+    directory = Path(temporary)
+    build = directory / "build with spaces"
+    run("cmake", "-S", str(repository), "-B", str(build), "-G", "Unix Makefiles",
+        "-DREAVEROS_USE_CACHE=OFF", "-DCMAKE_PROJECT_INCLUDE=" + str(fixture / "project-include.cmake"))
+    for project in ("toolchain-cmake", "toolchain-llvm"):
+        stamp = build / "toolchain" / (project + "-prefix/src") / (project + "-stamp")
+        for step in ("mkdir", "download"):
+            (stamp / (project + "-" + step)).touch()
+    run("cmake", "--build", str(build), "--target", "toolchain-cmake-prune", "toolchain-llvm-prune")
+    # Check the simulated cache before any real build can download/rebuild tools.
+    probe = run("cmake", "--build", str(build), "--target", "toolchain-llvm-install", "--", "-n")
+    assert "Performing " not in probe, probe
+
+    sources = [build / "install/toolchain/llvm/lib/clang" / version / "lib" / triple
+               / "libclang_rt.builtins.a" for triple in
+               ("x86_64-pc-reaveros-none", "x86_64-pc-reaveros-elf")]
+    outputs = [build / "install/sysroots" / ("amd64-" + mode) / "usr/lib/libclang_rt.builtins.a"
+               for mode in ("freestanding", "hosted")]
+    archive = directory / "libfixture.a"
+    object_file = directory / "fixture.o"
+
+    def install_sources(value):
+        run("c++", "-DBUILTIN_VALUE=" + str(value), "-c", str(fixture / "builtin.cpp"),
+            "-o", str(object_file))
+        run("ar", "rcs", str(archive), str(object_file))
+        for source in sources:
+            source.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(archive, source)
+            # Content changes must work even with an older source timestamp.
+            os.utime(source, (1, 1))
+
+    def build_target(target, verbose=False):
+        command = ["cmake", "--build", str(build), "--target", target, "--parallel", "4"]
+        if verbose:
+            command.append("--verbose")
+        output = run(*command)
+        assert "Performing " not in output, output
+        for source, destination in zip(sources, outputs):
+            assert destination.read_bytes() == source.read_bytes()
+        return output
+
+    install_sources(1)
+    build_target("fixture-builtin-consumer")
+    consumer = build / "fixture-builtin-consumer"
+    assert run(str(consumer)).strip() == "1"
+    timestamps = [path.stat().st_mtime_ns for path in outputs]
+    consumer_timestamp = consumer.stat().st_mtime_ns
+    for target in ("toolchain-llvm", "toolchain-llvm-install", "fixture-builtin-consumer"):
+        build_target(target)
+        assert [path.stat().st_mtime_ns for path in outputs] == timestamps
+        assert consumer.stat().st_mtime_ns == consumer_timestamp
+
+    for target, missing in (("toolchain-llvm", 0), ("toolchain-llvm-install", 1)):
+        neighbor_timestamp = outputs[1 - missing].stat().st_mtime_ns
+        outputs[missing].unlink()
+        build_target(target)
+        assert outputs[1 - missing].stat().st_mtime_ns == neighbor_timestamp
+    shutil.rmtree(build / "install/sysroots")
+    build_target("toolchain-llvm-install")
+
+    install_sources(2)
+    build_target("fixture-builtin-consumer")
+    assert run(str(consumer)).strip() == "2"
+    timestamps = [path.stat().st_mtime_ns for path in outputs]
+    consumer_timestamp = consumer.stat().st_mtime_ns
+    for source in sources:
+        os.utime(source, None)
+    build_target("fixture-builtin-consumer")
+    assert [path.stat().st_mtime_ns for path in outputs] == timestamps
+    assert consumer.stat().st_mtime_ns == consumer_timestamp
+
+    # Both entry points share one producer when requested in the same Make graph.
+    output = build_target("fixture-builtin-targets", verbose=True)
+    assert output.count(" -E copy_if_different ") == 2, output
+
+print("LLVM builtin staging preserves timestamps, repairs copies, updates consumers, and shares one Make producer.")

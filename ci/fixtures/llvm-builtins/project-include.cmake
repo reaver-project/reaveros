@@ -1,0 +1,16 @@
+function(_add_builtin_consumer)
+    add_executable(fixture-builtin-consumer "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/consumer.cpp")
+    target_link_libraries(fixture-builtin-consumer
+        "${CMAKE_BINARY_DIR}/install/sysroots/amd64-freestanding/usr/lib/libclang_rt.builtins.a")
+    add_dependencies(fixture-builtin-consumer toolchain-llvm-install)
+    add_custom_target(fixture-builtin-targets
+        DEPENDS toolchain-llvm toolchain-llvm-install)
+    foreach (_mode IN ITEMS freestanding hosted)
+        set(_builtin "${CMAKE_BINARY_DIR}/install/sysroots/amd64-${_mode}/usr/lib/libclang_rt.builtins.a")
+        get_source_file_property(_generated "${_builtin}" GENERATED)
+        if (NOT _generated)
+            message(FATAL_ERROR "The staged builtin is not declared as a generated file: ${_builtin}")
+        endif()
+    endforeach()
+endfunction()
+cmake_language(DEFER CALL _add_builtin_consumer)

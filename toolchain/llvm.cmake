@@ -164,14 +164,13 @@ foreach (architecture IN LISTS REAVEROS_ARCHITECTURES)
         set(_builtin_lib "${REAVEROS_BINARY_DIR}/install/toolchain/llvm/lib/clang/${_sub_path}/libclang_rt.builtins.a")
         set(_destination "${REAVEROS_BINARY_DIR}/install/sysroots/${architecture}-${mode}/usr/lib")
 
-        add_custom_command(TARGET toolchain-llvm POST_BUILD
-            COMMAND mkdir -p "${_destination}"
-            COMMAND cp "${_builtin_lib}" "${_destination}"
-            VERBATIM
-        )
+        # The main ExternalProject target depends on its install step target.
+        # Keep one producer, which also repairs copies in deleted sysroots.
         add_custom_command(TARGET toolchain-llvm-install POST_BUILD
-            COMMAND mkdir -p "${_destination}"
-            COMMAND cp "${_builtin_lib}" "${_destination}"
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${_destination}"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${_builtin_lib}" "${_destination}/libclang_rt.builtins.a"
+            BYPRODUCTS "${_destination}/libclang_rt.builtins.a"
             VERBATIM
         )
     endforeach()
