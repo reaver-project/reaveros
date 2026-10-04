@@ -4,7 +4,7 @@ ExternalProject_Add(toolchain-dosfstools
     GIT_SHALLOW TRUE
     UPDATE_DISCONNECTED 1
 
-    PATCH_COMMAND git checkout --detach ${REAVEROS_DOSFSTOOLS_REVISION}
+    PATCH_COMMAND "${GIT_EXECUTABLE}" checkout --detach ${REAVEROS_DOSFSTOOLS_REVISION}
 
     STEP_TARGETS install
 

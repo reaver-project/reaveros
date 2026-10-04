@@ -32,7 +32,8 @@ reaveros_file_dependency(hydration_dependency toolchain-archive-hydration-inputs
     "${REAVEROS_SOURCE_DIR}/toolchain/hydrate-git-archive")
 _reaveros_add_ep_file_dependencies(toolchain-archive download ${hydration_dependency})
 ExternalProject_Add_Step(toolchain-archive hydrate-source
-    COMMAND bash "${REAVEROS_SOURCE_DIR}/toolchain/hydrate-git-archive"
+    COMMAND "${CMAKE_COMMAND}" -E env "GIT_EXECUTABLE=${GIT_EXECUTABLE}"
+        bash "${REAVEROS_SOURCE_DIR}/toolchain/hydrate-git-archive"
         <SOURCE_DIR> "${TEST_REMOTE}" fixture "${TEST_REVISION}" <DOWNLOADED_FILE>
     DEPENDEES download update patch
     DEPENDERS configure

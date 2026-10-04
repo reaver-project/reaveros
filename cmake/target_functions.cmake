@@ -391,7 +391,8 @@ function(reaveros_add_ep_fetch_tag_target external_project revision)
 
     ExternalProject_Add_Step(${external_project}
         set-to-tag
-        COMMAND bash ${REAVEROS_SOURCE_DIR}/toolchain/ensure-git-tag
+        COMMAND "${CMAKE_COMMAND}" -E env "GIT_EXECUTABLE=${GIT_EXECUTABLE}"
+            bash "${REAVEROS_SOURCE_DIR}/toolchain/ensure-git-tag"
             <SOURCE_DIR> ${GIT_TAG} ${revision} ${GIT_REPOSITORY}
         DEPENDEES download
         DEPENDERS ${update_step} ${patch_step} configure build

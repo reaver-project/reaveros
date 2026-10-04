@@ -30,10 +30,10 @@ ExternalProject_Add(toolchain-cmake
 )
 ExternalProject_Add_Step(toolchain-cmake
     apply-patches
-    COMMAND git reset --hard
-    COMMAND git clean -fxd
-    COMMAND git checkout --detach ${REAVEROS_CMAKE_REVISION}
-    COMMAND git apply ${patch_files}
+    COMMAND "${GIT_EXECUTABLE}" reset --hard
+    COMMAND "${GIT_EXECUTABLE}" clean -fxd
+    COMMAND "${GIT_EXECUTABLE}" checkout --detach ${REAVEROS_CMAKE_REVISION}
+    COMMAND "${GIT_EXECUTABLE}" apply ${patch_files}
     DEPENDEES set-to-tag
     DEPENDERS configure
     DEPENDS ${patch_dependency}

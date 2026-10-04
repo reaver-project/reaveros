@@ -5,6 +5,7 @@ from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -54,10 +55,23 @@ with tempfile.TemporaryDirectory() as temporary:
     (source / "toolchain").mkdir(parents=True)
     for helper in helpers:
         shutil.copyfile(repository / "toolchain" / helper, source / "toolchain" / helper)
+    real_git = shutil.which("git")
+    selected_git = directory / "selected git"
+    poison_directory = directory / "poison"
+    poison_directory.mkdir()
+    for source_file, target_file in (
+        ("selected-git", selected_git), ("poison-git", poison_directory / "git")
+    ):
+        shutil.copyfile(repository / "ci/fixtures/toolchain-helper-inputs" / source_file, target_file)
+        target_file.chmod(0o755)
+    git_log = directory / "selected-git.log"
+    os.environ.update(TEST_REAL_GIT=real_git, TEST_SELECTED_GIT_LOG=str(git_log))
+    os.environ["PATH"] = str(poison_directory) + os.pathsep + os.environ["PATH"]
     build = directory / "build"
     run("cmake", "-S", str(repository / "ci/fixtures/toolchain-helper-inputs"),
         "-B", str(build), "-G", "Unix Makefiles", "-DTEST_REPOSITORY=" + str(repository),
         "-DTEST_HELPERS=" + str(source), "-DTEST_REMOTE=" + remote.as_uri(),
+        "-DGIT_EXECUTABLE=" + str(selected_git),
         "-DTEST_REVISION=" + revision, "-DTEST_ARCHIVE=" + archive_url,
         "-DTEST_ARCHIVE_HASH=" + archive_hash)
 
@@ -110,4 +124,18 @@ with tempfile.TemporaryDirectory() as temporary:
     server.shutdown()
     server.server_close()
 
-print("Toolchain helper-input and pruned-recovery tests passed.")
+    # The real superbuild's custom patch steps also use the selected path.
+    main_build = directory / "main-build"
+    run("cmake", "-S", str(repository), "-B", str(main_build), "-G", "Unix Makefiles",
+        "-DREAVEROS_USE_CACHE=OFF", "-DGIT_EXECUTABLE=" + str(selected_git))
+    for project in ("toolchain-cmake", "toolchain-llvm", "toolchain-dosfstools"):
+        rules = (main_build / "toolchain/CMakeFiles" / (project + "-install.dir/build.make")).read_text()
+        commands = [line for line in rules.splitlines()
+                    if re.search(r"(?:reset --hard|clean -fxd|checkout --detach|apply .+\.patch)", line)]
+        assert commands and all(str(selected_git) in line for line in commands), commands
+        assert not re.search(r"(?:^|\n)\t(?:cd .* && )?git ", rules)
+    calls = git_log.read_text()
+    for operation in ("clone", "rev-parse", "checkout", "remote get-url", "reset --mixed", "status"):
+        assert operation in calls, operation
+
+print("Toolchain helper-input, selected-Git, and pruned-recovery tests passed.")

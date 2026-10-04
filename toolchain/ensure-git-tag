@@ -12,6 +12,7 @@ source_directory=$1
 tag=$2
 revision=$3
 repository=$4
+git_executable=${GIT_EXECUTABLE:-git}
 
 if [[ ! ${tag} =~ ^[[:alnum:]_.-]+$ ]]
 then
@@ -31,16 +32,16 @@ fi
 
 if [[ ! -e ${source_directory}/.git ]]
 then
-    git clone --depth=1 --branch "${tag}" -- "${repository}" "${source_directory}"
+    "${git_executable}" clone --depth=1 --branch "${tag}" -- "${repository}" "${source_directory}"
 fi
 
-local_revision=$(git -C "${source_directory}" rev-parse --verify --quiet "refs/tags/${tag}^{commit}" || true)
+local_revision=$("${git_executable}" -C "${source_directory}" rev-parse --verify --quiet "refs/tags/${tag}^{commit}" || true)
 if [[ ${local_revision} == "${revision}" ]]
 then
     printf 'Already have %s at %s; skipping fetch.\n' "${tag}" "${revision}"
 else
-    git -C "${source_directory}" fetch --force --depth=1 origin "refs/tags/${tag}:refs/tags/${tag}"
-    fetched_revision=$(git -C "${source_directory}" rev-parse --verify "refs/tags/${tag}^{commit}")
+    "${git_executable}" -C "${source_directory}" fetch --force --depth=1 origin "refs/tags/${tag}:refs/tags/${tag}"
+    fetched_revision=$("${git_executable}" -C "${source_directory}" rev-parse --verify "refs/tags/${tag}^{commit}")
     if [[ ${fetched_revision} != "${revision}" ]]
     then
         printf 'Tag %s resolves to %s, not configured revision %s.\n' \
@@ -49,4 +50,4 @@ else
     fi
 fi
 
-git -C "${source_directory}" checkout "${tag}"
+"${git_executable}" -C "${source_directory}" checkout "${tag}"
