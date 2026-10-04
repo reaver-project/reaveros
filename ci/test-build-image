@@ -72,6 +72,7 @@ done
 "${self_dir}/test-component-install"
 "${self_dir}/test-build-dependencies"
 "${self_dir}/test-llvm-builtins"
+"${self_dir}/test-incbin-generation"
 "${repo_root}/ci/aws/test-strip-ecr-registry"
 "${self_dir}/test-toolchain-git-tag"
 "${self_dir}/test-toolchain-failure-recovery"

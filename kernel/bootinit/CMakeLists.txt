@@ -39,7 +39,7 @@ add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/bootinit
     VERBATIM
 )
 
-file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/incbin_bootinit.asm
+file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/incbin_bootinit.asm" CONTENT
     "
     .section .bootinit
     .globl begin_bootinit
@@ -48,6 +48,7 @@ file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/incbin_bootinit.asm
     .incbin \"${CMAKE_CURRENT_BINARY_DIR}/bootinit\"
     end_bootinit:
     "
+    @ONLY
 )
 
 add_library(bootinit-incbin STATIC

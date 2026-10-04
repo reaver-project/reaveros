@@ -78,7 +78,7 @@ set_target_properties(syscall_table
         COMPILE_FLAGS "-I'${CMAKE_SOURCE_DIR}' -g -mcmodel=kernel"
 )
 
-file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/incbin_vdso.asm
+file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/incbin_vdso.asm" CONTENT
     "
     .section .vdso
     .globl begin_vdso
@@ -87,6 +87,7 @@ file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/incbin_vdso.asm
     .incbin \"${CMAKE_CURRENT_BINARY_DIR}/libvdso.so\"
     end_vdso:
     "
+    @ONLY
 )
 
 add_library(vdso-incbin STATIC
