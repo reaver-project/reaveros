@@ -1,0 +1,21 @@
+cmake_minimum_required(VERSION 3.31)
+project(component-install-test CXX)
+
+include(ExternalProject)
+include("${TEST_REPOSITORY}/cmake/target_functions.cmake")
+set(REAVEROS_SOURCE_DIR "${TEST_REPOSITORY}")
+set(REAVEROS_BINARY_DIR "${CMAKE_BINARY_DIR}")
+set(REAVEROS_CMAKE "${CMAKE_COMMAND}")
+set(REAVEROS_COMPONENT_ARCHITECTURES amd64)
+set(REAVEROS_COMPONENT_MODES freestanding)
+set(REAVEROS_COMPONENT_INSTALL_PATH [=[sysroots/${_architecture}-${_mode}]=])
+set(REAVEROS_COMPONENT_DEPENDS "")
+set(REAVEROS_COMPONENT_SKIP_MODE_NAME FALSE)
+set(_REAVEROS_CONFIGURE_HANDLED_BY_BUILD CONFIGURE_HANDLED_BY_BUILD TRUE)
+
+configure_file(native-toolchain.cmake
+    "${CMAKE_BINARY_DIR}/install/toolchain/files/amd64-freestanding.cmake" COPYONLY)
+add_custom_target(toolchain-llvm-install)
+reaveros_add_component(alpha "")
+reaveros_add_component(beta "")
+add_custom_target(components DEPENDS alpha-freestanding-amd64 beta-freestanding-amd64)

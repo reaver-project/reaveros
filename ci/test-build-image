@@ -69,6 +69,7 @@ done
 "${repo_root}/docker/test-compiler-cache-options"
 "${repo_root}/ci/test-cache-launcher"
 "${self_dir}/test-build-selection"
+"${self_dir}/test-component-install"
 "${repo_root}/ci/aws/test-strip-ecr-registry"
 "${self_dir}/test-toolchain-git-tag"
 "${self_dir}/test-toolchain-failure-recovery"

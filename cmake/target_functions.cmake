@@ -124,6 +124,13 @@ function(reaveros_add_component _directory _prefix)
 
                 ${_REAVEROS_CONFIGURE_HANDLED_BY_BUILD}
 
+                INSTALL_COMMAND "${CMAKE_COMMAND}"
+                    "-DREAVEROS_BUILD_ROOT=${REAVEROS_BINARY_DIR}"
+                    "-DREAVEROS_INSTALL_PROJECT=${_component_name}"
+                    "-DREAVEROS_INSTALL_BINARY_DIR=<BINARY_DIR>"
+                    "-DREAVEROS_INSTALL_CMAKE=${REAVEROS_CMAKE}"
+                    -P "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/install_component.cmake"
+
                 CMAKE_COMMAND ${REAVEROS_CMAKE}
                 CMAKE_ARGS
                     --no-warn-unused-cli
@@ -135,6 +142,14 @@ function(reaveros_add_component _directory _prefix)
                     -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>
                     -DREAVEROS_ARCH=${_architecture}
                     -DREAVEROS_THORN=${REAVEROS_THORN}
+            )
+
+            # Existing child manifests let the ownership check adopt a build
+            # configured before the superbuild started tracking installations.
+            ExternalProject_Get_Property(${_component_name} BINARY_DIR)
+            file(GENERATE
+                OUTPUT "${REAVEROS_BINARY_DIR}/cmake/install-projects/${_component_name}.txt"
+                CONTENT "${BINARY_DIR}/install_manifest.txt\n"
             )
 
             if (${_mode} STREQUAL "tests")
