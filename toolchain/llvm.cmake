@@ -1,5 +1,6 @@
 set(REAVEROS_LLVM_PARALLEL_LINK_JOBS 8 CACHE STRING "Sets the limit for parallel link jobs of LLVM.")
 
+set(_reaveros_amd64_processor AMD64)
 set(_reaveros_amd64_freestanding_target x86_64-pc-reaveros-none)
 set(_reaveros_amd64_freestanding_flags
     COMPILER_RT_BUILD_BUILTINS=ON
@@ -47,6 +48,7 @@ endif()
 set(_fakeroot "--sysroot='${CMAKE_CURRENT_SOURCE_DIR}/llvm/fakeroot'")
 
 foreach (architecture IN LISTS REAVEROS_ARCHITECTURES)
+    set(_processor ${_reaveros_${architecture}_processor})
     foreach (mode IN ITEMS freestanding hosted)
         set(_target ${_reaveros_${architecture}_${mode}_target})
         set(_cc_flags ${_reaveros_${architecture}_${mode}_extra_cc_flags})
@@ -61,7 +63,7 @@ foreach (architecture IN LISTS REAVEROS_ARCHITECTURES)
             list(APPEND _runtime_flags
                 -D${_llvm_runtime}_${_target}_LLVM_ENABLE_RUNTIMES=compiler-rt
                 -D${_llvm_runtime}_${_target}_CMAKE_SYSTEM_NAME=ReaverOS
-                -D${_llvm_runtime}_${_target}_CMAKE_SYSTEM_PROCESSOR=${_arch}
+                -D${_llvm_runtime}_${_target}_CMAKE_SYSTEM_PROCESSOR=${_processor}
                 -D${_llvm_runtime}_${_target}_CMAKE_BUILD_TYPE=RelWithDebInfo
                 "-D${_llvm_runtime}_${_target}_CMAKE_ASM_FLAGS=-nodefaultlibs -nostartfiles ${_fakeroot} ${_cc_flags}"
                 "-D${_llvm_runtime}_${_target}_CMAKE_C_FLAGS=-nodefaultlibs -nostartfiles ${_fakeroot} ${_cc_flags}"
