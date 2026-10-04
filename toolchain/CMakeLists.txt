@@ -3,7 +3,11 @@ set_directory_properties(
         CLEAN_NO_CUSTOM 1
 )
 
-file(GLOB toolchain_files RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}/files ${CMAKE_CURRENT_SOURCE_DIR}/files/*.cmake.in)
+file(GLOB toolchain_files
+    RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}/files
+    CONFIGURE_DEPENDS
+    ${CMAKE_CURRENT_SOURCE_DIR}/files/*.cmake.in
+)
 
 foreach (toolchain_file_in IN LISTS toolchain_files)
     string(REGEX

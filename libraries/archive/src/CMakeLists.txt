@@ -1,4 +1,4 @@
-file(GLOB sources *.cpp)
+file(GLOB sources CONFIGURE_DEPENDS *.cpp)
 
 add_definitions(-g)
 

@@ -1,4 +1,4 @@
-file(GLOB sources *.cpp)
+file(GLOB sources CONFIGURE_DEPENDS *.cpp)
 
 if (REAVEROS_IS_FREESTANDING)
     set(_library_type STATIC)

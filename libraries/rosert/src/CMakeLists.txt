@@ -1,6 +1,7 @@
 set(install_dir ${CMAKE_INSTALL_PREFIX}/usr/lib)
 
 file(GLOB crt_sources
+    CONFIGURE_DEPENDS
     ${REAVEROS_ARCH}/crt*.asm
 )
 
@@ -13,6 +14,7 @@ install(TARGETS rosert-crt
 )
 
 file(GLOB sources
+    CONFIGURE_DEPENDS
     ${REAVEROS_ARCH}/*.asm
     *.cpp
     ${REAVEROS_ARCH}/*.cpp
