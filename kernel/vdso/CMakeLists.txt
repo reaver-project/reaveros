@@ -5,7 +5,7 @@ file(GLOB thorn_files
 
 set(_thorn_user_files "${CMAKE_CURRENT_BINARY_DIR}/thorn/user/types.h")
 set(_thorn_vdso_files)
-set(_thorn_kernel_files)
+set(_thorn_kernel_files "${CMAKE_CURRENT_BINARY_DIR}/thorn/kernel/meta.h")
 
 foreach (abs_thorn_file IN LISTS thorn_files)
     file(RELATIVE_PATH thorn_file "${CMAKE_CURRENT_SOURCE_DIR}" "${abs_thorn_file}")
