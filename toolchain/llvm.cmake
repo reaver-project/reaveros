@@ -1,7 +1,5 @@
 set(REAVEROS_LLVM_PARALLEL_LINK_JOBS 8 CACHE STRING "Sets the limit for parallel link jobs of LLVM.")
 
-set(_reaveros_amd64_processor AMD64)
-set(_reaveros_amd64_freestanding_target x86_64-pc-reaveros-none)
 set(_reaveros_amd64_freestanding_flags
     COMPILER_RT_BUILD_BUILTINS=ON
     COMPILER_RT_BUILD_LIBFUZZER=OFF
@@ -16,7 +14,6 @@ set(_reaveros_amd64_freestanding_extra_cc_flags
     "-fno-rtti -fno-exceptions -mno-red-zone -fno-stack-protector"
 )
 
-set(_reaveros_amd64_hosted_target x86_64-pc-reaveros-elf)
 set(_reaveros_amd64_hosted_flags
     COMPILER_RT_BUILD_BUILTINS=ON
     COMPILER_RT_BUILD_LIBFUZZER=OFF
@@ -46,8 +43,10 @@ else()
 endif()
 
 set(_fakeroot "--sysroot='${CMAKE_CURRENT_SOURCE_DIR}/llvm/fakeroot'")
+set(_llvm_backends)
 
 foreach (architecture IN LISTS REAVEROS_ARCHITECTURES)
+    list(APPEND _llvm_backends "${_reaveros_${architecture}_llvm_backend}")
     set(_processor ${_reaveros_${architecture}_processor})
     foreach (mode IN ITEMS freestanding hosted)
         set(_target ${_reaveros_${architecture}_${mode}_target})
@@ -62,7 +61,7 @@ foreach (architecture IN LISTS REAVEROS_ARCHITECTURES)
         foreach (_llvm_runtime IN ITEMS BUILTINS RUNTIMES)
             list(APPEND _runtime_flags
                 -D${_llvm_runtime}_${_target}_LLVM_ENABLE_RUNTIMES=compiler-rt
-                -D${_llvm_runtime}_${_target}_CMAKE_SYSTEM_NAME=ReaverOS
+                -D${_llvm_runtime}_${_target}_CMAKE_SYSTEM_NAME=${_reaveros_${mode}_system}
                 -D${_llvm_runtime}_${_target}_CMAKE_SYSTEM_PROCESSOR=${_processor}
                 -D${_llvm_runtime}_${_target}_CMAKE_BUILD_TYPE=RelWithDebInfo
                 "-D${_llvm_runtime}_${_target}_CMAKE_ASM_FLAGS=-nodefaultlibs -nostartfiles ${_fakeroot} ${_cc_flags}"
@@ -75,6 +74,8 @@ foreach (architecture IN LISTS REAVEROS_ARCHITECTURES)
         endforeach()
     endforeach()
 endforeach()
+list(REMOVE_DUPLICATES _llvm_backends)
+string(JOIN "|" _llvm_backends ${_llvm_backends})
 
 set(patch_files
     ${CMAKE_CURRENT_LIST_DIR}/llvm/patches/000-reaveros-support-with-less-plt.patch
@@ -116,7 +117,7 @@ ExternalProject_Add(toolchain-llvm
         -DCMAKE_BUILD_TYPE=Release
         -Wno-dev
         -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>
-        -DLLVM_TARGETS_TO_BUILD=X86
+        -DLLVM_TARGETS_TO_BUILD=${_llvm_backends}
         -DLLVM_ENABLE_PROJECTS=clang|lld
         -DLLVM_ENABLE_RUNTIMES=libunwind|libcxx|libcxxabi
         -DLLVM_RUNTIME_TARGETS=${_runtime_targets}

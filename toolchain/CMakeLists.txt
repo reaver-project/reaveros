@@ -3,6 +3,8 @@ set_directory_properties(
         CLEAN_NO_CUSTOM 1
 )
 
+configure_file(targets.cmake "${REAVEROS_BINARY_DIR}/install/toolchain/files/targets.cmake" COPYONLY)
+
 file(GLOB toolchain_files
     RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}/files
     CONFIGURE_DEPENDS

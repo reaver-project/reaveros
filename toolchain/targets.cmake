@@ -1,0 +1,15 @@
+include_guard(GLOBAL)
+
+# Target identities shared by the superbuild and generated toolchain files.
+set(_reaveros_architectures amd64)
+set(_reaveros_modes freestanding hosted uefi tests)
+set(_reaveros_amd64_processor AMD64)
+set(_reaveros_amd64_llvm_backend X86)
+set(_reaveros_amd64_freestanding_target x86_64-pc-reaveros-none)
+set(_reaveros_amd64_hosted_target x86_64-pc-reaveros-elf)
+set(_reaveros_amd64_uefi_target x86_64-windows)
+set(_reaveros_amd64_tests_target x86_64-unknown-linux-gnu)
+set(_reaveros_freestanding_system ReaverOS)
+set(_reaveros_hosted_system ReaverOS)
+set(_reaveros_uefi_system ReaverOS)
+set(_reaveros_tests_system Linux)

@@ -36,6 +36,7 @@ if (NOT GIT_EXECUTABLE OR NOT GIT_VERSION_STRING)
 endif()
 
 include(ExternalProject)
+include(toolchain/targets.cmake)
 
 set(_REAVEROS_CONFIGURE_HANDLED_BY_BUILD CONFIGURE_HANDLED_BY_BUILD TRUE)
 
@@ -58,7 +59,7 @@ endfunction()
 if ("${REAVEROS_ARCHITECTURES}" STREQUAL "")
     message(FATAL_ERROR "REAVEROS_ARCHITECTURES must select at least one target CPU architecture.")
 endif()
-_reaveros_validate_selection(REAVEROS_ARCHITECTURES amd64)
+_reaveros_validate_selection(REAVEROS_ARCHITECTURES ${_reaveros_architectures})
 _reaveros_validate_selection(REAVEROS_LOADERS uefi)
 
 include(cmake/target_functions.cmake)
