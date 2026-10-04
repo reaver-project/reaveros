@@ -33,6 +33,12 @@ expect_no_target()
 }
 
 configure_selection -DREAVEROS_LOADERS=uefi
+if ! grep --fixed-strings --line-regexp --quiet \
+    'REAVEROS_ENABLE_UNIT_TESTS:BOOL=OFF' "${test_directory}/build/CMakeCache.txt"
+then
+    printf 'Unit tests must default to disabled.\n' >&2
+    exit 1
+fi
 for target in loader-uefi-amd64 all-loaders all-loaders-uefi \
     image-uefi-efipart-amd64 toolchain-dosfstools-install toolchain-mtools-install
 do
@@ -51,6 +57,13 @@ cmake --build "${test_directory}/build" --target all-loaders --parallel 4 > /dev
 configure_selection -DREAVEROS_LOADERS=uefi
 expect_target loader-uefi-amd64
 expect_target image-uefi-efipart-amd64
+
+configure_selection -DREAVEROS_ENABLE_UNIT_TESTS=ON
+expect_target kernel-tests-amd64
+expect_target library-rosestd-tests-amd64
+configure_selection -DREAVEROS_ENABLE_UNIT_TESTS=OFF
+expect_no_target kernel-tests-amd64
+expect_no_target library-rosestd-tests-amd64
 
 expect_invalid_selection()
 {
@@ -78,5 +91,25 @@ expect_invalid_selection REAVEROS_LOADERS typo 'Unsupported value'
 expect_invalid_selection REAVEROS_ARCHITECTURES '' 'must select at least one'
 expect_invalid_selection REAVEROS_ARCHITECTURES 'amd64;amd64' 'Duplicate value'
 expect_invalid_selection REAVEROS_LOADERS 'uefi;uefi' 'Duplicate value'
+
+for generator in Ninja 'Ninja Multi-Config'
+do
+    # Unsupported generators must fail before probing compilers or build tools.
+    if cmake -S "${repo_root}" -B "${test_directory}/${generator}" -G "${generator}" \
+        -DCMAKE_C_COMPILER=/nonexistent/compiler -DCMAKE_CXX_COMPILER=/nonexistent/compiler \
+        -DCMAKE_MAKE_PROGRAM=/nonexistent/build-tool > "${test_directory}/generator-log" 2>&1
+    then
+        printf 'Unsupported generator %s configured successfully.\n' "${generator}" >&2
+        exit 1
+    fi
+    if ! grep --fixed-strings --quiet "Unsupported CMake generator '${generator}'." \
+        "${test_directory}/generator-log" \
+        || ! grep --fixed-strings --quiet -- "-G 'Unix Makefiles'" "${test_directory}/generator-log"
+    then
+        cat "${test_directory}/generator-log" >&2
+        printf 'Unsupported generator %s failed without the Make diagnostic.\n' "${generator}" >&2
+        exit 1
+    fi
+done
 
 printf 'Build selection tests passed.\n'

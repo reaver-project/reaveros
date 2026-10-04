@@ -1,4 +1,7 @@
 cmake_minimum_required(VERSION 3.31)
+if (NOT CMAKE_GENERATOR STREQUAL "Unix Makefiles")
+    message(FATAL_ERROR "Unsupported CMake generator '${CMAKE_GENERATOR}'.\nReaverOS requires GNU Make. Configure with -G 'Unix Makefiles'.")
+endif()
 project(reaveros-meta C CXX)
 
 set(REAVEROS_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
@@ -63,7 +66,7 @@ include(cmake/target_functions.cmake)
 reaveros_add_aggregate_targets("")
 add_custom_target(all-toolchain)
 
-option(REAVEROS_ENABLE_UNIT_TESTS OFF)
+option(REAVEROS_ENABLE_UNIT_TESTS "Enable unit tests for project components." OFF)
 if (REAVEROS_ENABLE_UNIT_TESTS)
     set(_REAVEROS_TEST_TARGET test)
 endif()
