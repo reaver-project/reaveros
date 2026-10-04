@@ -44,7 +44,7 @@ if (NOT REAVEROS_ENABLE_UNIT_TESTS)
     set_target_properties(kernel-elf
         PROPERTIES
             COMPILE_FLAGS "-g -mcmodel=kernel -DREAVEROS_KERNEL_SOURCE_ROOT='\"${CMAKE_SOURCE_DIR}\"'"
-            LINK_FLAGS "-Wl,-T,${linker_script} -static -Wl,-Map=kernel.map -lclang_rt.builtins -ffreestanding"
+            LINK_FLAGS "-Wl,-T,'${linker_script}' -static -Wl,-Map=kernel.map -lclang_rt.builtins -ffreestanding"
             LINK_DEPENDS ${linker_script}
     )
 
@@ -54,6 +54,7 @@ if (NOT REAVEROS_ENABLE_UNIT_TESTS)
         COMMAND
             ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:kernel-elf> ${CMAKE_BINARY_DIR}/kernel
                 --set-section-flags .data=alloc,load,contents
+        VERBATIM
     )
 
     add_custom_target(kernel-flat ALL DEPENDS ${CMAKE_BINARY_DIR}/kernel)

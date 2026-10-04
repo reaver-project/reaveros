@@ -8,20 +8,20 @@ set(fake_sysroot "@REAVEROS_BINARY_DIR@/install/sysroots/amd64-tests")
 set(clang_target_dirs "@REAVEROS_BINARY_DIR@/install/toolchain/llvm/include/${triple}/c++/v1")
 set(libcxx_lib_dir "@REAVEROS_BINARY_DIR@/install/toolchain/llvm/lib/x86_64-unknown-linux-gnu/")
 
-set(CMAKE_EXE_LINKER_FLAGS "--sysroot=${CMAKE_SYSROOT} -L=/usr/lib")
+set(CMAKE_EXE_LINKER_FLAGS "--sysroot='${CMAKE_SYSROOT}' -L=/usr/lib")
 
-set(CMAKE_C_FLAGS "-isystem ${fake_sysroot}/usr/include")
-set(CMAKE_CXX_FLAGS "-stdlib=libc++ -isystem ${clang_target_dirs} -isystem ${fake_sysroot}/usr/include")
-set(CMAKE_EXE_LINKER_FLAGS "-stdlib=libc++ -L${fake_sysroot}/usr/lib")
+set(CMAKE_C_FLAGS "-isystem '${fake_sysroot}/usr/include'")
+set(CMAKE_CXX_FLAGS "-stdlib=libc++ -isystem '${clang_target_dirs}' -isystem '${fake_sysroot}/usr/include'")
+set(CMAKE_EXE_LINKER_FLAGS "-stdlib=libc++ -L'${fake_sysroot}/usr/lib'")
 set(CMAKE_BUILD_RPATH "${libcxx_lib_dir}")
 
-set(CMAKE_LINKER ${tools}/clang++)
-set(CMAKE_OBJCOPY ${tools}/llvm-objcopy)
+set(CMAKE_LINKER "${tools}/clang++")
+set(CMAKE_OBJCOPY "${tools}/llvm-objcopy")
 
-set(CMAKE_ASM_COMPILER ${tools}/clang)
+set(CMAKE_ASM_COMPILER "${tools}/clang")
 set(CMAKE_ASM_FLAGS "-masm=intel")
 
-set(CMAKE_C_COMPILER ${tools}/clang)
+set(CMAKE_C_COMPILER "${tools}/clang")
 set(CMAKE_C_COMPILER_TARGET ${triple})
 set(CMAKE_C_COMPILE_FLAGS
     "-Wall -Wextra -Wpedantic -Werror -Wno-unused-const-variable -g"
@@ -38,7 +38,7 @@ set(CMAKE_C_LINK_EXECUTABLE
 set(CMAKE_C_STANDARD @REAVEROS_C_STANDARD@)
 set(CMAKE_C_EXTENSIONS OFF)
 
-set(CMAKE_CXX_COMPILER ${tools}/clang++)
+set(CMAKE_CXX_COMPILER "${tools}/clang++")
 set(CMAKE_CXX_COMPILER_TARGET ${triple})
 set(CMAKE_CXX_COMPILE_FLAGS
     "-Wall -Wextra -Wpedantic -Werror -Wno-unused-const-variable -g"

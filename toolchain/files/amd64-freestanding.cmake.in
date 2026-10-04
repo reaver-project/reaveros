@@ -5,17 +5,17 @@ set(REAVEROS_IS_FREESTANDING TRUE)
 
 set(triple x86_64-pc-reaveros-none)
 
-set(tools @REAVEROS_BINARY_DIR@/install/toolchain/llvm/bin)
+set(tools "@REAVEROS_BINARY_DIR@/install/toolchain/llvm/bin")
 
-set(CMAKE_SYSROOT @REAVEROS_BINARY_DIR@/install/sysroots/amd64-freestanding)
-set(CMAKE_EXE_LINKER_FLAGS "--sysroot=${CMAKE_SYSROOT} -L${CMAKE_SYSROOT}/usr/lib -nostartfiles")
+set(CMAKE_SYSROOT "@REAVEROS_BINARY_DIR@/install/sysroots/amd64-freestanding")
+set(CMAKE_EXE_LINKER_FLAGS "--sysroot='${CMAKE_SYSROOT}' -L'${CMAKE_SYSROOT}/usr/lib' -nostartfiles")
 
-set(CMAKE_OBJCOPY ${tools}/llvm-objcopy)
+set(CMAKE_OBJCOPY "${tools}/llvm-objcopy")
 
-set(CMAKE_ASM_COMPILER ${tools}/clang)
+set(CMAKE_ASM_COMPILER "${tools}/clang")
 set(CMAKE_ASM_FLAGS "-masm=intel -fPIC")
 
-set(CMAKE_C_COMPILER ${tools}/clang)
+set(CMAKE_C_COMPILER "${tools}/clang")
 set(CMAKE_C_COMPILER_TARGET ${triple})
 set(CMAKE_C_COMPILE_FLAGS
     "-ffreestanding -fPIC -fno-stack-protector -D__ROSE_FREESTANDING \
@@ -30,7 +30,7 @@ set(CMAKE_C_COMPILE_OBJECT
 set(CMAKE_C_STANDARD @REAVEROS_C_STANDARD@)
 set(CMAKE_C_EXTENSIONS OFF)
 
-set(CMAKE_CXX_COMPILER ${tools}/clang++)
+set(CMAKE_CXX_COMPILER "${tools}/clang++")
 set(CMAKE_CXX_COMPILER_TARGET ${triple})
 set(CMAKE_CXX_COMPILE_FLAGS
     "-ffreestanding -fno-rtti -fno-exceptions -fPIC -fno-stack-protector -D__ROSE_FREESTANDING \
@@ -44,4 +44,3 @@ set(CMAKE_CXX_COMPILE_OBJECT
 
 set(CMAKE_CXX_STANDARD @REAVEROS_CXX_STANDARD@)
 set(CMAKE_CXX_EXTENSIONS OFF)
-

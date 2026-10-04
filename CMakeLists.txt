@@ -98,9 +98,9 @@ if (REAVEROS_ENABLE_UNIT_TESTS)
 
         set(properties_for_trampoline
 "${properties_for_trampoline}
-set(component_directory_${component} ${BINARY_DIR})
-set(component_labels_${component} ${labels})
-set(component_names_${component} ${display_name})
+set(component_directory_${component} [==[${BINARY_DIR}]==])
+set(component_labels_${component} [==[${labels}]==])
+set(component_names_${component} [==[${display_name}]==])
 "
         )
     endforeach()

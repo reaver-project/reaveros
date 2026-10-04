@@ -44,7 +44,7 @@ else()
     set(_runtime_flags)
 endif()
 
-set(_fakeroot "--sysroot=${CMAKE_CURRENT_SOURCE_DIR}/llvm/fakeroot")
+set(_fakeroot "--sysroot='${CMAKE_CURRENT_SOURCE_DIR}/llvm/fakeroot'")
 
 foreach (architecture IN LISTS REAVEROS_ARCHITECTURES)
     foreach (mode IN ITEMS freestanding hosted)
@@ -157,12 +157,14 @@ foreach (architecture IN LISTS REAVEROS_ARCHITECTURES)
         set(_destination "${REAVEROS_BINARY_DIR}/install/sysroots/${architecture}-${mode}/usr/lib")
 
         add_custom_command(TARGET toolchain-llvm POST_BUILD
-            COMMAND mkdir -p ${_destination}
-            COMMAND cp ${_builtin_lib} ${_destination}
+            COMMAND mkdir -p "${_destination}"
+            COMMAND cp "${_builtin_lib}" "${_destination}"
+            VERBATIM
         )
         add_custom_command(TARGET toolchain-llvm-install POST_BUILD
-            COMMAND mkdir -p ${_destination}
-            COMMAND cp ${_builtin_lib} ${_destination}
+            COMMAND mkdir -p "${_destination}"
+            COMMAND cp "${_builtin_lib}" "${_destination}"
+            VERBATIM
         )
     endforeach()
 endforeach()

@@ -26,6 +26,7 @@ add_custom_command(
     COMMAND "${REAVEROS_THORN}" -i "${CMAKE_CURRENT_SOURCE_DIR}" -o "${CMAKE_CURRENT_BINARY_DIR}/thorn" -s "rose::syscall" -a ${REAVEROS_ARCH}
     DEPENDS ${REAVEROS_THORN} ${thorn_files}
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    VERBATIM
 )
 add_custom_target(thorn-generation
     DEPENDS
@@ -74,7 +75,7 @@ add_dependencies(syscall_table thorn-generation)
 
 set_target_properties(syscall_table
     PROPERTIES
-        COMPILE_FLAGS "-I${CMAKE_SOURCE_DIR} -g -mcmodel=kernel"
+        COMPILE_FLAGS "-I'${CMAKE_SOURCE_DIR}' -g -mcmodel=kernel"
 )
 
 file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/incbin_vdso.asm

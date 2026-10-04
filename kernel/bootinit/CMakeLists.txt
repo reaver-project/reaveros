@@ -22,7 +22,7 @@ configure_file(${linker_script_in} ${linker_script} @ONLY)
 set_target_properties(bootinit-elf
     PROPERTIES
         COMPILE_FLAGS "-g -Wno-infinite-recursion"
-        LINK_FLAGS "-Wl,-T,${linker_script} -static -Wl,-Map=bootinit.map -ffreestanding"
+        LINK_FLAGS "-Wl,-T,'${linker_script}' -static -Wl,-Map=bootinit.map -ffreestanding"
         LINK_DEPENDS ${linker_script}
 )
 
@@ -36,6 +36,7 @@ add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/bootinit
     COMMAND
         ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:bootinit-elf> ${CMAKE_CURRENT_BINARY_DIR}/bootinit
             --set-section-flags .data=alloc,load,contents
+    VERBATIM
 )
 
 file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/incbin_bootinit.asm

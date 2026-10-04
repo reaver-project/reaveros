@@ -364,5 +364,6 @@ function(reaveros_add_ep_fetch_tag_target external_project revision)
         COMMAND touch ${STAMP_DIR}/${external_project}-build
         COMMAND touch ${STAMP_DIR}/${external_project}-install
         COMMAND rm -rf ${STAMP_DIR}/${external_project}-prune
+        VERBATIM
     )
 endfunction()

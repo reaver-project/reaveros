@@ -19,27 +19,27 @@ function(_reaveros_add_uefi_image_target architecture)
             # there isn't anything useful for this to do quite yet
             ${REAVEROS_SOURCE_DIR}/loaders/uefi/config/reaveros.conf
 
-        COMMAND rm -rf ${_targetfs_contents}
-        COMMAND mkdir -p ${_targetfs_contents}/EFI/BOOT
+        COMMAND rm -rf "${_targetfs_contents}"
+        COMMAND mkdir -p "${_targetfs_contents}/EFI/BOOT"
         COMMAND cp
-            ${REAVEROS_BINARY_DIR}/install/loaders/uefi-${architecture}/loader-uefi
-            ${_targetfs_contents}/EFI/BOOT/BOOTX64.EFI
+            "${REAVEROS_BINARY_DIR}/install/loaders/uefi-${architecture}/loader-uefi"
+            "${_targetfs_contents}/EFI/BOOT/BOOTX64.EFI"
         COMMAND cp
-            ${REAVEROS_SOURCE_DIR}/loaders/uefi/config/reaveros.conf
-            ${_targetfs_contents}/EFI/BOOT/reaveros.conf
+            "${REAVEROS_SOURCE_DIR}/loaders/uefi/config/reaveros.conf"
+            "${_targetfs_contents}/EFI/BOOT/reaveros.conf"
 
-        COMMAND mkdir -p ${_targetfs_contents}/reaver
+        COMMAND mkdir -p "${_targetfs_contents}/reaver"
         COMMAND cp
-            ${REAVEROS_BINARY_DIR}/install/kernels/${architecture}/kernel
-            ${_targetfs_contents}/reaver/kernel.img
+            "${REAVEROS_BINARY_DIR}/install/kernels/${architecture}/kernel"
+            "${_targetfs_contents}/reaver/kernel.img"
         COMMAND cp
-            ${REAVEROS_BINARY_DIR}/install/images/initrd-${architecture}.img
-            ${_targetfs_contents}/reaver/initrd.img
+            "${REAVEROS_BINARY_DIR}/install/images/initrd-${architecture}.img"
+            "${_targetfs_contents}/reaver/initrd.img"
 
-        COMMAND rm -f ${_targetfs_path}
-        COMMAND fallocate -l 1474560 ${_targetfs_path}
-        COMMAND ${REAVEROS_BINARY_DIR}/install/toolchain/dosfstools/sbin/mkfs.fat ${_targetfs_path}
-        COMMAND ${REAVEROS_BINARY_DIR}/install/toolchain/mtools/bin/mcopy -os -i ${_targetfs_path} ${_targetfs_contents}/* ::/
+        COMMAND rm -f "${_targetfs_path}"
+        COMMAND fallocate -l 1474560 "${_targetfs_path}"
+        COMMAND "${REAVEROS_BINARY_DIR}/install/toolchain/dosfstools/sbin/mkfs.fat" "${_targetfs_path}"
+        COMMAND "${REAVEROS_BINARY_DIR}/install/toolchain/mtools/bin/mcopy" -os -i "${_targetfs_path}" "${_targetfs_contents}/*" ::/
     )
 
     add_custom_target(image-uefi-efipart-${architecture}

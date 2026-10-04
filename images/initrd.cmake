@@ -11,14 +11,14 @@ function(_reaveros_add_initrd_image_target architecture)
             all-${architecture}-userspace-services
             library-rosestd-hosted-${architecture}
 
-        COMMAND rm -rf ${_working_path}
-        COMMAND mkdir ${_working_path}
-        COMMAND mkdir -p ${_target_dir}
+        COMMAND rm -rf "${_working_path}"
+        COMMAND mkdir "${_working_path}"
+        COMMAND mkdir -p "${_target_dir}"
 
-        COMMAND cp -r ${REAVEROS_BINARY_DIR}/install/userspace/services/${architecture}/* ${_working_path}
-        COMMAND cp -r ${REAVEROS_BINARY_DIR}/install/sysroots/${architecture}-hosted/usr/lib/librosestd.so ${_working_path}
+        COMMAND cp -r "${REAVEROS_BINARY_DIR}/install/userspace/services/${architecture}/*" "${_working_path}"
+        COMMAND cp -r "${REAVEROS_BINARY_DIR}/install/sysroots/${architecture}-hosted/usr/lib/librosestd.so" "${_working_path}"
 
-        COMMAND cd ${_working_path} && find . | cpio --no-absolute-filenames --format=newc --create > ${_target_path}
+        COMMAND cd "${_working_path}" && find . | cpio --no-absolute-filenames --format=newc --create > "${_target_path}"
     )
 
     add_custom_target(image-initrd-${architecture}
@@ -33,4 +33,3 @@ reaveros_add_aggregate_targets(images-initrd)
 foreach (architecture IN LISTS REAVEROS_ARCHITECTURES)
     _reaveros_add_initrd_image_target(${architecture})
 endforeach()
-
