@@ -104,8 +104,11 @@ set(vdso_symbols_file "${CMAKE_CURRENT_BINARY_DIR}/vdso_symbols.lds")
 set(vdso_symbols_file "${vdso_symbols_file}" PARENT_SCOPE)
 
 add_custom_command(OUTPUT ${vdso_symbols_file}
-    COMMAND ${CMAKE_READELF} --dyn-syms $<TARGET_FILE:vdso> | tail -n+4 | grep 'FUNC' | grep -v __rose_syscall | awk \'{ printf \"%s = __vdso_base + 0x%s\;\\n\", $$8, $$2; }\' > ${vdso_symbols_file}
+    COMMAND bash -o pipefail -c
+        "\"$1\" --dyn-syms \"$2\" | tail -n+4 | grep 'FUNC' | grep -v __rose_syscall | awk '{ printf \"%s = __vdso_base + 0x%s;\\n\", $8, $2; }' > \"$3\""
+        bash "${CMAKE_READELF}" "$<TARGET_FILE:vdso>" "${vdso_symbols_file}"
     DEPENDS vdso
+    VERBATIM
 )
 
 add_custom_target(vdso_symbols DEPENDS ${vdso_symbols_file})
@@ -114,8 +117,11 @@ set(vdso_offsets_file "${CMAKE_CURRENT_BINARY_DIR}/vdso_offsets.lds")
 set(vdso_offsets_file "${vdso_offsets_file}" PARENT_SCOPE)
 
 add_custom_command(OUTPUT ${vdso_offsets_file}
-    COMMAND ${CMAKE_READELF} --dyn-syms $<TARGET_FILE:vdso> | tail -n+4 | grep __rose_syscall | awk \'{ printf \"%s = __vdso_base + 0x%s\;\\n\", $$8, $$2; }\' > ${vdso_offsets_file}
+    COMMAND bash -o pipefail -c
+        "\"$1\" --dyn-syms \"$2\" | tail -n+4 | grep __rose_syscall | awk '{ printf \"%s = __vdso_base + 0x%s;\\n\", $8, $2; }' > \"$3\""
+        bash "${CMAKE_READELF}" "$<TARGET_FILE:vdso>" "${vdso_offsets_file}"
     DEPENDS vdso
+    VERBATIM
 )
 
 add_custom_target(vdso_offsets DEPENDS ${vdso_offsets_file})
