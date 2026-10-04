@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+
+import os
+from pathlib import Path
+import shlex
+import shutil
+import subprocess
+import sys
+import tempfile
+
+
+if Path(sys.argv[0]).name == "docker":
+    # Execute the actual container script against the local native fixture.
+    arguments = sys.argv[sys.argv.index("/usr/bin/env"):]
+    script = arguments[3]
+    script = script.replace("cd /build", "cd " + shlex.quote(os.environ["TEST_BUILD"]))
+    script = script.replace("cmake /reaveros", "cmake " + shlex.quote(os.environ["TEST_SOURCE"])
+        + " -DTEST_REPOSITORY=" + shlex.quote(os.environ["TEST_REPOSITORY"])
+        + " -DTEST_BETA_DEPENDS_ON_ALPHA=" + os.environ["TEST_DEPENDENCY"])
+    result = subprocess.run(["bash", "-c", script] + arguments[4:])
+    sys.exit(result.returncode)
+
+
+repository = Path(__file__).resolve().parent.parent
+fixture = repository / "ci/fixtures/component-install"
+
+
+def run(*command, env=None, succeeds=True):
+    result = subprocess.run(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    if (result.returncode == 0) != succeeds:
+        raise RuntimeError(result.stdout)
+    if "jobserver unavailable" in result.stdout:
+        raise AssertionError(result.stdout)
+    return result.stdout
+
+
+with tempfile.TemporaryDirectory() as temporary:
+    directory = Path(temporary)
+    source = directory / "source with spaces"
+    shutil.copytree(fixture, source)
+    for name in ("alpha", "beta"):
+        component = source / name
+        shutil.copytree(fixture / "component", component)
+        (component / "files").mkdir()
+        (component / "files" / (name + " header.h")).write_text(name + " header\n")
+        (component / "hosted.h").write_text(name + " hosted\n")
+    beta_cmake = source / "beta/CMakeLists.txt"
+    with beta_cmake.open("a") as stream:
+        stream.write('\nif (NOT EXISTS "${CMAKE_INSTALL_PREFIX}/usr/include/alpha header.h")\n'
+            '    message(FATAL_ERROR "Missing alpha configure prerequisite")\nendif()\n')
+
+    build = directory / "build with spaces"
+    run("cmake", "-S", str(source), "-B", str(build), "-G", "Unix Makefiles",
+        "-DTEST_REPOSITORY=" + str(repository), "-DREAVEROS_ENABLE_UNIT_TESTS=ON",
+        "-DREAVEROS_ARCHITECTURES=amd64", "-DTEST_BETA_DEPENDS_ON_ALPHA=OFF")
+
+    def make_target(target):
+        return run("make", "-C", str(build), "-j4", target)
+
+    # Warm state masks the undeclared configure prerequisite after install-tree removal.
+    make_target("alpha-freestanding-amd64")
+    make_target("beta-freestanding-amd64")
+    shutil.rmtree(build / "install/sysroots")
+    make_target("beta-freestanding-amd64")
+    assert not (build / "install/sysroots/amd64-freestanding/usr/include/alpha header.h").exists()
+
+    binaries = [build / (name + "-freestanding-amd64-prefix/src/"
+        + name + "-freestanding-amd64-build") for name in ("alpha", "beta")]
+    for binary in binaries:
+        (binary / "stale-configure-marker").touch()
+    cache_files = [build / "toolchain/fixture-prefix/src/fixture-stamp/download",
+                   build / "toolchain/fixture-prefix/src/fixture-build/cached-output",
+                   build / "install/toolchain/llvm/bin/cached-compiler"]
+    for cached in cache_files:
+        cached.parent.mkdir(parents=True, exist_ok=True)
+        cached.write_text("preserve toolchain cache\n")
+    timestamps = {cached: cached.stat().st_mtime_ns for cached in cache_files}
+
+    binary_directory = directory / "bin"
+    binary_directory.mkdir()
+    (binary_directory / "docker").symlink_to(Path(__file__).resolve())
+    env = dict(os.environ, PATH=str(binary_directory) + os.pathsep + os.environ["PATH"],
+        TEST_BUILD=str(build), TEST_SOURCE=str(source), TEST_REPOSITORY=str(repository),
+        TEST_DEPENDENCY="OFF")
+    command = (str(repository / "ci/check-build-dependencies"), "amd64", "fixture.invalid/image")
+    output = run(*command, env=env, succeeds=False)
+    assert "Missing alpha configure prerequisite" in output, output
+    assert all(not (binary / "stale-configure-marker").exists() for binary in binaries)
+    assert all(cached.stat().st_mtime_ns == mtime for cached, mtime in timestamps.items())
+
+    # Adding the dependency makes each independent target build succeed.
+    env["TEST_DEPENDENCY"] = "ON"
+    output = run(*command, env=env)
+    assert output.count("Performing configure step for 'alpha-freestanding-amd64'") == 2, output
+    assert output.count("Performing configure step for 'beta-freestanding-amd64'") == 1, output
+    for name in ("alpha", "beta"):
+        executable = build / "install/sysroots/amd64-freestanding/usr/bin" / name
+        run(str(executable))
+    assert all(cached.read_text() == "preserve toolchain cache\n"
+               and cached.stat().st_mtime_ns == mtime for cached, mtime in timestamps.items())
+
+print("Cold component dependency checks detect warm-cache omissions and preserve the toolchain cache.")

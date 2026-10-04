@@ -146,10 +146,14 @@ function(reaveros_add_component _directory _prefix)
 
             # Existing child manifests let the ownership check adopt a build
             # configured before the superbuild started tracking installations.
-            ExternalProject_Get_Property(${_component_name} BINARY_DIR)
+            ExternalProject_Get_Property(${_component_name} BINARY_DIR STAMP_DIR TMP_DIR)
             file(GENERATE
                 OUTPUT "${REAVEROS_BINARY_DIR}/cmake/install-projects/${_component_name}.txt"
                 CONTENT "${BINARY_DIR}/install_manifest.txt\n"
+            )
+            file(GENERATE
+                OUTPUT "${REAVEROS_BINARY_DIR}/cmake/component-build-directories/${_component_name}.txt"
+                CONTENT "${BINARY_DIR}\n${STAMP_DIR}\n${TMP_DIR}\n"
             )
 
             if (${_mode} STREQUAL "tests")

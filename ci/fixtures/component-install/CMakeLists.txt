@@ -17,5 +17,8 @@ configure_file(native-toolchain.cmake
     "${CMAKE_BINARY_DIR}/install/toolchain/files/amd64-freestanding.cmake" COPYONLY)
 add_custom_target(toolchain-llvm-install)
 reaveros_add_component(alpha "")
+if (TEST_BETA_DEPENDS_ON_ALPHA)
+    set(REAVEROS_COMPONENT_DEPENDS alpha-freestanding-amd64)
+endif()
 reaveros_add_component(beta "")
 add_custom_target(components DEPENDS alpha-freestanding-amd64 beta-freestanding-amd64)

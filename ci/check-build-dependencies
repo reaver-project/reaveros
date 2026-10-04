@@ -35,9 +35,18 @@ docker run --rm \
             exit 1
         fi
 
+        component_directory_files=(cmake/component-build-directories/*.txt)
+        mapfile -t component_directories < <(cat -- "${component_directory_files[@]}")
+
         for target in "${install_targets[@]}"
         do
-            rm -rf install/{images,kernels,loaders,sysroots,userspace}
+            # Each target must configure and build using its declared prerequisites.
+            # Keep the toolchain cache while discarding all component build state.
+            rm -rf -- "${component_directories[@]}" \
+                install/{images,kernels,loaders,sysroots,userspace} \
+                cmake/install-ownership cmake/install-staging
+            cmake /reaveros -DREAVEROS_ENABLE_UNIT_TESTS=ON \
+                -DREAVEROS_ARCHITECTURES="${architecture}"
             make "${target}" -j"$(nproc)"
         done
     ' -- "${architecture}"
