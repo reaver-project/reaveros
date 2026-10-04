@@ -36,8 +36,27 @@ include(ExternalProject)
 
 set(_REAVEROS_CONFIGURE_HANDLED_BY_BUILD CONFIGURE_HANDLED_BY_BUILD TRUE)
 
-set(REAVEROS_ARCHITECTURES "amd64" CACHE STRING "List of architectures to build for. Possible values: amd64.")
-set(REAVEROS_LOADERS "uefi" CACHE STRING "List of loaders to build images with. Possible values: uefi (amd64 only).")
+set(REAVEROS_ARCHITECTURES "amd64" CACHE STRING "List of target CPU architectures to enable. Possible values: amd64.")
+set(REAVEROS_LOADERS "uefi" CACHE STRING "List of bootloaders to enable. Possible values: uefi (amd64 only).")
+
+function(_reaveros_validate_selection _name)
+    set(_seen_values "")
+    foreach (_value IN LISTS ${_name})
+        if (NOT _value IN_LIST ARGN)
+            message(FATAL_ERROR "Unsupported value '${_value}' for ${_name}. Supported values: ${ARGN}.")
+        endif()
+        if (_value IN_LIST _seen_values)
+            message(FATAL_ERROR "Duplicate value '${_value}' in ${_name}.")
+        endif()
+        list(APPEND _seen_values "${_value}")
+    endforeach()
+endfunction()
+
+if ("${REAVEROS_ARCHITECTURES}" STREQUAL "")
+    message(FATAL_ERROR "REAVEROS_ARCHITECTURES must select at least one target CPU architecture.")
+endif()
+_reaveros_validate_selection(REAVEROS_ARCHITECTURES amd64)
+_reaveros_validate_selection(REAVEROS_LOADERS uefi)
 
 include(cmake/target_functions.cmake)
 

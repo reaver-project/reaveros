@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+repo_root=$(git -C "${self_dir}" rev-parse --show-toplevel)
+test_directory=$(mktemp -d)
+trap 'rm -rf -- "${test_directory}"' EXIT
+
+configure_selection()
+{
+    cmake -S "${repo_root}" -B "${test_directory}/build" -G 'Unix Makefiles' \
+        -DREAVEROS_USE_CACHE=OFF -DREAVEROS_ARCHITECTURES=amd64 "$@" > /dev/null
+    cmake --build "${test_directory}/build" --target help > "${test_directory}/targets"
+}
+
+expect_target()
+{
+    if ! grep --fixed-strings --line-regexp --quiet "... $1" "${test_directory}/targets"
+    then
+        printf 'Selected build target %s is missing.\n' "$1" >&2
+        exit 1
+    fi
+}
+
+expect_no_target()
+{
+    if grep --fixed-strings --line-regexp --quiet "... $1" "${test_directory}/targets"
+    then
+        printf 'Disabled build target %s remains registered.\n' "$1" >&2
+        exit 1
+    fi
+}
+
+configure_selection -DREAVEROS_LOADERS=uefi
+for target in loader-uefi-amd64 all-loaders all-loaders-uefi \
+    image-uefi-efipart-amd64 toolchain-dosfstools-install toolchain-mtools-install
+do
+    expect_target "${target}"
+done
+
+configure_selection -DREAVEROS_LOADERS=
+expect_target all-loaders
+for target in loader-uefi-amd64 all-loaders-uefi \
+    image-uefi-efipart-amd64 toolchain-dosfstools-install toolchain-mtools-install
+do
+    expect_no_target "${target}"
+done
+cmake --build "${test_directory}/build" --target all-loaders --parallel 4 > /dev/null
+
+configure_selection -DREAVEROS_LOADERS=uefi
+expect_target loader-uefi-amd64
+expect_target image-uefi-efipart-amd64
+
+expect_invalid_selection()
+{
+    option=$1
+    value=$2
+    diagnostic=$3
+    if cmake -S "${repo_root}" -B "${test_directory}/invalid" -G 'Unix Makefiles' \
+        -DREAVEROS_USE_CACHE=OFF -DREAVEROS_ARCHITECTURES=amd64 -DREAVEROS_LOADERS=uefi \
+        "-D${option}=${value}" > "${test_directory}/invalid-log" 2>&1
+    then
+        printf 'Invalid %s selection %s configured successfully.\n' "${option}" "${value}" >&2
+        exit 1
+    fi
+    if ! grep --fixed-strings --quiet "${diagnostic}" "${test_directory}/invalid-log" \
+        || ! grep --fixed-strings --quiet "${option}" "${test_directory}/invalid-log"
+    then
+        cat "${test_directory}/invalid-log" >&2
+        printf 'Invalid %s selection failed without the expected diagnostic.\n' "${option}" >&2
+        exit 1
+    fi
+}
+
+expect_invalid_selection REAVEROS_ARCHITECTURES typo 'Unsupported value'
+expect_invalid_selection REAVEROS_LOADERS typo 'Unsupported value'
+expect_invalid_selection REAVEROS_ARCHITECTURES '' 'must select at least one'
+expect_invalid_selection REAVEROS_ARCHITECTURES 'amd64;amd64' 'Duplicate value'
+expect_invalid_selection REAVEROS_LOADERS 'uefi;uefi' 'Duplicate value'
+
+printf 'Build selection tests passed.\n'
