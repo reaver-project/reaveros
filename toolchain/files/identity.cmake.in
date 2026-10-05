@@ -29,6 +29,26 @@ else()
     set(CMAKE_SYSROOT "${_reaveros_sysroot}")
 endif()
 
+set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+if (REAVEROS_BUILD_MODE STREQUAL "tests")
+    list(PREPEND CMAKE_FIND_ROOT_PATH "${fake_sysroot}")
+    list(REMOVE_DUPLICATES CMAKE_FIND_ROOT_PATH)
+    set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY BOTH)
+    set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE BOTH)
+    set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE BOTH)
+else()
+    set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+    set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+    set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
+endif()
+
+# Compiler initialization precedes the runtime libraries under construction.
+# Use real compilation/archive probes without requiring those libraries yet.
+if (NOT DEFINED CMAKE_TRY_COMPILE_TARGET_TYPE)
+    set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+    set(_reaveros_bootstrap_probes TRUE)
+endif()
+
 set(CMAKE_C_COMPILER "${tools}/clang")
 set(CMAKE_CXX_COMPILER "${tools}/clang++")
 set(CMAKE_ASM_COMPILER "${tools}/clang")

@@ -34,6 +34,35 @@ with tempfile.TemporaryDirectory(prefix="mode checks with spaces ", dir=root) as
             command = [str(cmake), "-S", str(repository / "ci/fixtures/toolchain-modes"),
                 "-B", str(build), "-G", "Unix Makefiles", "-DCMAKE_BUILD_TYPE=Release",
                 "-DCMAKE_TOOLCHAIN_FILE=" + str(root / "install/toolchain/files" / ("amd64-" + mode + ".cmake"))]
+            lookup_host = Path(temporary) / "host-lookup"
+            lookup_target = root / "install/sysroots" / ("amd64-" + mode)
+            lookup_files = []
+            for prefix in (lookup_host, lookup_target / "usr"):
+                for relative in ("lib/libreaveros-policy-probe.a", "include/reaveros-policy-probe.h", "bin/reaveros-policy-probe"):
+                    path = prefix / relative
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text("host" if prefix == lookup_host else "target")
+                    if path.parent.name == "bin":
+                        path.chmod(0o755)
+                    lookup_files.append(path)
+            command += ["-DTEST_LOOKUP_HOST=" + str(lookup_host)]
+            launcher_log = build / "launcher.log"
+            launcher = ";".join((sys.executable,
+                str(repository / "ci/fixtures/toolchain-modes/launcher.py"), str(launcher_log)))
+            for lang in flags:
+                if lang != "ASM":
+                    command += ["-DCMAKE_" + lang + "_COMPILER_LAUNCHER=" + launcher]
+                configuration_flags = ("-Wa,--defsym,REAVEROS_CONFIGURATION_ASM=1" if lang == "ASM"
+                    else "-O2 -DNDEBUG -DREAVEROS_USER_CONFIGURATION=1")
+                command += ["-DCMAKE_" + lang + "_FLAGS_RELEASE=" + configuration_flags]
+            link_flag = "-Wl,/timestamp:0" if mode == "uefi" else "-Wl,--defsym,REAVEROS_USER_LINK=1"
+            link_configuration_flag = ("-Wl,/debug:none" if mode == "uefi"
+                else "-Wl,--defsym,REAVEROS_USER_LINK_CONFIGURATION=1")
+            command += ["-DCMAKE_EXE_LINKER_FLAGS=" + link_flag,
+                "-DCMAKE_EXE_LINKER_FLAGS_RELEASE=" + link_configuration_flag]
+            if mode == "tests":
+                command += ["-DCMAKE_SHARED_LINKER_FLAGS=" + link_flag,
+                    "-DCMAKE_SHARED_LINKER_FLAGS_RELEASE=" + link_configuration_flag]
             env = dict(os.environ)
             if inputs == "cache":
                 command += ["-DCMAKE_" + lang + "_FLAGS=" + value for lang, value in flags.items()]
@@ -53,17 +82,75 @@ with tempfile.TemporaryDirectory(prefix="mode checks with spaces ", dir=root) as
                     assert "-DREAVEROS_USER_CXX=1" in tokens
                 else:
                     assert "-Wa,--defsym,REAVEROS_USER_ASM=1" in tokens
+                if not record["file"].endswith(".asm") and mode != "tests":
+                    required = ["-ffreestanding", "-fno-stack-protector",
+                        "-mno-sse", "-mno-sse2", "-mno-sse3", "-mno-sse4", "-mno-avx"]
+                    if mode in ("freestanding", "uefi"):
+                        required += ["-mno-red-zone"]
+                        if record["file"].endswith(".cpp"):
+                            required += ["-fno-rtti", "-fno-exceptions"]
+                    if mode in ("freestanding", "hosted"):
+                        required += ["-fPIC"]
+                    if mode == "hosted":
+                        required += ["-fno-exceptions"]
+                    if mode == "uefi":
+                        required += ["-mno-stack-arg-probe"]
+                    assert all(option in tokens for option in required), tokens
             formats = run(str(readobj), "--file-headers", str(build / "libmode-probe.a"))
             assert formats.count("Format: " + ("COFF-x86-64" if mode == "uefi" else "elf64-x86-64")) == 3, formats
             cache = (build / "CMakeCache.txt").read_text()
             for lang, value in flags.items():
                 assert "CMAKE_" + lang + "_FLAGS:STRING=" + value in cache, lang
+            assert "CMAKE_EXE_LINKER_FLAGS:STRING=" + link_flag in cache
+            assert "CMAKE_EXE_LINKER_FLAGS_RELEASE:STRING=" + link_configuration_flag in cache
+            launches = launcher_log.read_text().splitlines()
+            # CMake also uses the launcher for initial compiler probes.
+            source_launches = [json.loads(line) for line in launches
+                if any(record["file"] in json.loads(line) for record in records)]
+            assert len(source_launches) == len([record for record in records
+                if not record["file"].endswith(".asm")]), source_launches
+            if mode == "tests":
+                for executable in ("c-runtime-probe", "cxx-runtime-probe"):
+                    run(str(build / executable))
+                    assert link_flag in (build / "CMakeFiles" / (executable + ".dir/link.txt")).read_text()
+                    assert link_configuration_flag in (build / "CMakeFiles" / (executable + ".dir/link.txt")).read_text()
+                shared_link = (build / "CMakeFiles/runtime-shared-probe.dir/link.txt").read_text()
+                assert link_flag in shared_link and link_configuration_flag in shared_link
+                assert "CMAKE_SHARED_LINKER_FLAGS:STRING=" + link_flag in cache
+                assert "CMAKE_SHARED_LINKER_FLAGS_RELEASE:STRING=" + link_configuration_flag in cache
 
             # Reconfiguration preserves user cache values without accumulating policy.
             before = records
             run(*command, env=env)
             assert json.loads((build / "compile_commands.json").read_text()) == before
             run(str(cmake), "--build", str(build), "--parallel", "4")
+            assert launcher_log.read_text().splitlines() == launches, "Reconfiguration rebuilt unchanged objects"
+            for path in lookup_files:
+                path.unlink()
             print(mode + " " + inputs + ": compile flags, ABI formats, and reconfiguration passed", flush=True)
+
+        # The actual runtime project must reject unusable compiler options
+        # during configuration, after removing its compiler-success bypass.
+        invalid = subprocess.run([str(cmake), "-S", str(repository / "libraries/rosestd"),
+            "-B", str(Path(temporary) / (mode + "-invalid")), "-G", "Unix Makefiles",
+            "-DCMAKE_TOOLCHAIN_FILE=" + str(root / "install/toolchain/files" / ("amd64-" + mode + ".cmake")),
+            "-DCMAKE_CXX_FLAGS=-f-reaveros-deliberately-invalid-option"],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        assert invalid.returncode != 0 and "-f-reaveros-deliberately-invalid-option" in invalid.stdout, invalid.stdout
+
+    # Exercise year-numbered old standards as well as modern versions: a
+    # numeric comparison alone incorrectly accepts C99 and C++98.
+    for language, standards in (("C", ("90", "99")), ("CXX", ("98", "11", "17"))):
+        for standard in standards:
+            result = subprocess.run([str(cmake), "-S", str(repository / "ci/fixtures/toolchain-modes"),
+                "-B", str(Path(temporary) / (language + standard)), "-G", "Unix Makefiles",
+                "-DCMAKE_TOOLCHAIN_FILE=" + str(root / "install/toolchain/files/amd64-tests.cmake"),
+                "-DCMAKE_" + language + "_STANDARD=" + standard],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            assert result.returncode != 0 and "requires at least" in result.stdout, result.stdout
+    run(str(cmake), "-S", str(repository / "ci/fixtures/toolchain-modes"),
+        "-B", str(Path(temporary) / "newer-standards"), "-G", "Unix Makefiles",
+        "-DCMAKE_TOOLCHAIN_FILE=" + str(root / "install/toolchain/files/amd64-tests.cmake"),
+        "-DCMAKE_C_STANDARD=17", "-DCMAKE_CXX_STANDARD=23")
 
 print("All four toolchain modes preserve caller flags and target ABI requirements.")

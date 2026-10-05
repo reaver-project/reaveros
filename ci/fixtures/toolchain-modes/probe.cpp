@@ -1,6 +1,9 @@
 #ifndef REAVEROS_USER_CXX
 #error User C++ flags were lost
 #endif
+#ifndef REAVEROS_USER_CONFIGURATION
+#error User configuration-specific C++ flags were lost
+#endif
 static_assert(__cplusplus >= 202002L, "C++20 requirement");
 static_assert(sizeof(void *) == 8, "AMD64 pointer ABI");
 #ifdef EXPECT_WINDOWS_ABI

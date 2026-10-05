@@ -277,8 +277,6 @@ void context::generate_symbol(std::string_view name, const symbol & symb)
 
                     case 1:
                     {
-                        auto && handle_desc = std::get<1>(param);
-
                         user_stream << "    ::std::uintptr_t " << pname;
                         vdso_stream << "    ::std::uintptr_t";
 

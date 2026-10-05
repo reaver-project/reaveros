@@ -22,6 +22,8 @@ docker run --rm \
         cmake /reaveros -DREAVEROS_ENABLE_UNIT_TESTS=ON \
             -DREAVEROS_ARCHITECTURES="${architecture}"
 
+        python3 /reaveros/ci/test-toolchain-modes /build
+
         mapfile -t install_targets < <(
             make help \
                 | sed -n "s/^\.\.\. //p" \

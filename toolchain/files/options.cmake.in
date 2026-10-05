@@ -54,5 +54,7 @@ if (REAVEROS_BUILD_MODE STREQUAL "uefi")
     add_link_options("$<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,EXECUTABLE>:--target=${triple}>")
 endif()
 
-list(APPEND CMAKE_PROJECT_INCLUDE "${CMAKE_CURRENT_LIST_DIR}/project-policy.cmake")
+list(APPEND CMAKE_PROJECT_INCLUDE
+    "${CMAKE_CURRENT_LIST_DIR}/probe-policy.cmake"
+    "${CMAKE_CURRENT_LIST_DIR}/project-policy.cmake")
 list(REMOVE_DUPLICATES CMAKE_PROJECT_INCLUDE)

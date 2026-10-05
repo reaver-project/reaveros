@@ -1,6 +1,10 @@
 #ifndef REAVEROS_USER_C
 #error User C flags were lost
 #endif
+#ifndef REAVEROS_USER_CONFIGURATION
+#error User configuration-specific C flags were lost
+#endif
+_Static_assert(__STDC_VERSION__ >= 201112L, "C11 requirement");
 _Static_assert(sizeof(void *) == 8, "AMD64 pointer ABI");
 #ifdef EXPECT_WINDOWS_ABI
 _Static_assert(sizeof(long) == 4, "UEFI Windows ABI");

@@ -2,6 +2,3 @@ set(_reaveros_toolchain_architecture amd64)
 set(_reaveros_toolchain_mode uefi)
 include("${CMAKE_CURRENT_LIST_DIR}/identity.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/options.cmake")
-
-set(CMAKE_C_COMPILER_WORKS 1)
-set(CMAKE_CXX_COMPILER_WORKS 1)
