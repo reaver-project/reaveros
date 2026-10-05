@@ -13,20 +13,30 @@ class MatrixCompilerTests(unittest.TestCase):
         with matrix_file.open(encoding="utf-8") as source:
             self.matrix = yaml.load(source, Loader=UniqueKeyLoader)
 
-    def test_current_matrix_has_independent_jobs_and_an_image_chain(self):
+    def test_current_matrix_has_independent_jobs_and_debug_release_image_chains(self):
         result = compile_matrix(self.matrix, "ci")
         independent = result["standalone"]["include"]
         self.assertEqual(
             [group["name"] for group in independent],
             ["Check build-system dependencies", "Unit tests"],
         )
-        image = result["producer"]["include"][0]["job_matrix"]["include"][0]
-        smoke = result["consumer"]["include"][0]["job_matrix"]["include"][0]
-        self.assertEqual(image["name"], "Build image (uefi-efipart-amd64)")
-        self.assertEqual(image["artifact_output"], smoke["artifact_input"])
-        self.assertEqual(smoke["invoke"], "boot-smoke")
-        self.assertEqual(smoke["tags"]["machine"], "q35")
-        self.assertEqual(smoke["runner_class"], "validation-medium")
+        images = result["producer"]["include"][0]["job_matrix"]["include"]
+        smokes = result["consumer"]["include"][0]["job_matrix"]["include"]
+        self.assertEqual(len(images), 2)
+        self.assertEqual(len(smokes), 2)
+        by_configuration = {job["tags"]["configuration"]: job for job in images}
+        self.assertEqual(set(by_configuration), {"debug", "release"})
+        self.assertEqual(len({job["artifact_output"] for job in images}), 2)
+        for smoke in smokes:
+            configuration = smoke["tags"]["configuration"]
+            image = by_configuration[configuration]
+            self.assertEqual(
+                image["name"], f"Build image (uefi-efipart-amd64-{configuration})"
+            )
+            self.assertEqual(image["artifact_output"], smoke["artifact_input"])
+            self.assertEqual(smoke["invoke"], "boot-smoke")
+            self.assertEqual(smoke["tags"]["machine"], "q35")
+            self.assertEqual(smoke["runner_class"], "validation-medium")
 
     def test_each_row_expands_only_its_own_dimensions_and_shares_producers(self):
         row = self.matrix["workflows"]["ci"][1]
@@ -35,11 +45,22 @@ class MatrixCompilerTests(unittest.TestCase):
         result = compile_matrix(self.matrix, "ci")
         images = result["producer"]["include"][0]["job_matrix"]["include"]
         smoke = result["consumer"]["include"][0]["job_matrix"]["include"]
-        self.assertEqual(len(images), 1)
-        self.assertEqual(len(smoke), 4)
+        self.assertEqual(len(images), 2)
+        self.assertEqual(len(smoke), 8)
         self.assertEqual(
-            {job["artifact_input"] for job in smoke}, {images[0]["artifact_output"]}
+            {job["artifact_input"] for job in smoke},
+            {job["artifact_output"] for job in images},
         )
+        for image in images:
+            consumers = [
+                job for job in smoke
+                if job["artifact_input"] == image["artifact_output"]
+            ]
+            self.assertEqual(len(consumers), 4)
+            self.assertEqual(
+                {job["tags"]["configuration"] for job in consumers},
+                {image["tags"]["configuration"]},
+            )
 
     def test_new_job_type_uses_metadata_without_a_compiler_case(self):
         self.matrix["jobs"]["api-test"] = {
@@ -81,6 +102,11 @@ class MatrixCompilerTests(unittest.TestCase):
         invalid = copy.deepcopy(self.matrix)
         del invalid["workflows"]["ci"][1]["loader"]
         with self.assertRaisesRegex(MatrixError, "job image needs tag loader"):
+            compile_matrix(invalid, "ci")
+
+        invalid = copy.deepcopy(self.matrix)
+        del invalid["workflows"]["ci"][1]["configuration"]
+        with self.assertRaisesRegex(MatrixError, "job image needs tag configuration"):
             compile_matrix(invalid, "ci")
 
         invalid = copy.deepcopy(self.matrix)

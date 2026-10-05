@@ -11,7 +11,16 @@ fi
 architecture=$(jq --exit-status --raw-output '.tags.architecture' <<< "$1")
 loader=$(jq --exit-status --raw-output '.tags.loader' <<< "$1")
 layout=$(jq --exit-status --raw-output '.tags.layout' <<< "$1")
+configuration=$(jq --exit-status --raw-output '.tags.configuration' <<< "$1")
+case "${configuration}" in
+    debug) configuration=Debug ;;
+    release) configuration=Release ;;
+    *)
+        printf 'Unsupported image configuration: %s.\n' "${configuration}" >&2
+        exit 2
+        ;;
+esac
 
 ./ci/build-image "${architecture}" "${loader}" "${layout}" \
-    "${BUILD_ENVIRONMENT_IMAGE}" artifacts
+    "${BUILD_ENVIRONMENT_IMAGE}" artifacts "${configuration}"
 mv "artifacts/${loader}-${layout}-${architecture}.img" artifacts/image.img

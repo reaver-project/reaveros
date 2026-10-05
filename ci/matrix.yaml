@@ -5,6 +5,7 @@ tags:
   firmware: {}
   machine: {}
   language: {}
+  configuration: {}
 
 artifacts:
   image: {file: image.img}
@@ -28,7 +29,7 @@ jobs:
   image:
     name: Build image
     invoke: build-image
-    axes: [loader, layout, architecture]
+    axes: [loader, layout, architecture, configuration]
     phase: producer
     runner_class: validation-medium
     build_environment: true
@@ -36,7 +37,7 @@ jobs:
   smoke:
     name: Boot smoke test
     invoke: boot-smoke
-    axes: [loader, layout, architecture, firmware, machine]
+    axes: [loader, layout, architecture, configuration, firmware, machine]
     phase: consumer
     runner_class: validation-medium
     needs: image
@@ -47,4 +48,4 @@ workflows:
   ci:
     # Each line is a submatrix: jobs selects job types, and tag lists are axes.
     - {jobs: [build-dependencies, unit-tests], architecture: [amd64]}
-    - {jobs: [image, smoke], architecture: [amd64], loader: [uefi], layout: [efipart], firmware: [ovmf], machine: [q35]}
+    - {jobs: [image, smoke], architecture: [amd64], loader: [uefi], layout: [efipart], configuration: [debug, release], firmware: [ovmf], machine: [q35]}

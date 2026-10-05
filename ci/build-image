@@ -2,9 +2,9 @@
 
 set -euo pipefail
 
-if [[ $# -ne 5 ]]
+if [[ $# -lt 5 || $# -gt 6 ]]
 then
-    printf 'usage: %s <architecture> <loader> <layout> <build-environment image> <artifact directory>\n' "$0" >&2
+    printf 'usage: %s <architecture> <loader> <layout> <build-environment image> <artifact directory> [configuration]\n' "$0" >&2
     exit 2
 fi
 
@@ -13,6 +13,7 @@ loader=$2
 layout=$3
 build_environment=$4
 artifact_dir=$5
+configuration=${6:-}
 image=${loader}-${layout}-${architecture}
 repo_root=$(git rev-parse --show-toplevel)
 
@@ -35,10 +36,12 @@ docker run --rm \
         architecture=$1
         loader=$2
         image=$3
+        configuration=$4
         cd /build
         cmake /reaveros -DREAVEROS_ENABLE_UNIT_TESTS=ON \
             -DREAVEROS_ARCHITECTURES="${architecture}" \
-            -DREAVEROS_LOADERS="${loader}"
+            -DREAVEROS_LOADERS="${loader}" \
+            -DCMAKE_BUILD_TYPE="${configuration}"
         make "image-${image}" -j"$(nproc)"
         cp "install/images/${image}.img" /artifacts/
-    ' -- "${architecture}" "${loader}" "${image}"
+    ' -- "${architecture}" "${loader}" "${image}" "${configuration}"
