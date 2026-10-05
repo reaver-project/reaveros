@@ -2,10 +2,7 @@ cmake_minimum_required(VERSION 3.31)
 project(reaveros-kernel ASM CXX)
 
 if (NOT REAVEROS_ENABLE_UNIT_TESTS)
-    include_directories(${CMAKE_BINARY_DIR}/vdso/thorn)
-
-    add_subdirectory(vdso)
-    add_subdirectory(bootinit)
+    include(interface.cmake)
 
     file(GLOB_RECURSE sources
         CONFIGURE_DEPENDS
@@ -48,7 +45,7 @@ if (NOT REAVEROS_ENABLE_UNIT_TESTS)
         "$<$<COMPILE_LANGUAGE:CXX>:REAVEROS_KERNEL_SOURCE_ROOT=\"${CMAKE_SOURCE_DIR}\">")
     target_link_options(kernel-elf PRIVATE
         "LINKER:-T,${linker_script}" LINKER:-Map,kernel.map -static -ffreestanding)
-    set_property(TARGET kernel-elf PROPERTY LINK_DEPENDS "${linker_script}")
+    set_property(TARGET kernel-elf PROPERTY LINK_DEPENDS "${linker_script}" "${vdso_symbols_file}")
     reaveros_require_linker_dependencies(kernel-elf CXX)
 
     add_custom_command(OUTPUT ${CMAKE_BINARY_DIR}/kernel

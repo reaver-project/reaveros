@@ -59,4 +59,4 @@ SECTIONS
     }
 }
 
-INCLUDE "@CMAKE_BINARY_DIR@/vdso/vdso_symbols.lds";
+INCLUDE "@vdso_symbols_file@";

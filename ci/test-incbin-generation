@@ -25,13 +25,18 @@ with tempfile.TemporaryDirectory() as temporary:
     shutil.copytree(repository / "ci/fixtures/incbin", source)
     # Load the production generation, archive, and OBJECT_DEPENDS rules without
     # their unrelated kernel/Thorn/bootinit prerequisites.
-    for name in ("bootinit", "vdso"):
-        rules = (repository / "kernel" / name / "CMakeLists.txt").read_text()
-        start = re.search(r"file\((?:WRITE|CONFIGURE)[^\n]*incbin_" + name + r"\.asm", rules).start()
-        end = rules.index("add_dependencies(vdso-incbin vdso)", start) if name == "vdso" else len(rules)
+    rules = (repository / "kernel/interface.cmake").read_text()
+    blocks = list(re.finditer(r"file\(CONFIGURE[^\n]*incbin_(bootinit|vdso)\.asm", rules))
+    for index, block in enumerate(blocks):
+        name = block.group(1)
+        end = blocks[index + 1].start() if index + 1 < len(blocks) else len(rules)
         component = source / name
         component.mkdir()
-        (component / "CMakeLists.txt").write_text(rules[start:end])
+        variable = "REAVEROS_BOOTINIT_FILE" if name == "bootinit" else "REAVEROS_KERNEL_VDSO_FILE"
+        binary = "bootinit" if name == "bootinit" else "libvdso.so"
+        (component / "CMakeLists.txt").write_text(
+            'set(' + variable + ' "${CMAKE_CURRENT_BINARY_DIR}/' + binary + '")\n'
+            + rules[block.start():end])
     build = directory / "build with spaces"
 
     def configure():

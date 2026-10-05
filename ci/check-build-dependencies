@@ -46,10 +46,30 @@ docker run --rm \
             # Each target must configure and build using its declared prerequisites.
             # Keep the toolchain cache while discarding all component build state.
             rm -rf -- "${component_directories[@]}" \
-                install/{images,kernels,loaders,sysroots,userspace} \
+                install/{images,kernels,loaders,sysroots,userspace,kernel-interface,bootinit} \
                 cmake/install-ownership cmake/install-staging
             cmake /reaveros -DREAVEROS_ENABLE_UNIT_TESTS=ON \
                 -DREAVEROS_ARCHITECTURES="${architecture}"
             make "${target}" -j"$(nproc)"
+            case "${target}" in
+                vdso-${architecture}|kernel-interface-${architecture}|library-rosert-hosted-${architecture}|library-rosestd-hosted-${architecture}|library-elf-hosted-${architecture}|userspace-service-logger-${architecture}|bootinit-${architecture}|kernel-bootinit-${architecture})
+                    mapfile -t kernel_directories < "cmake/component-build-directories/kernel-${architecture}.txt"
+                    if [[ -e ${kernel_directories[0]}/CMakeCache.txt || -e install/kernels/${architecture}/kernel ]]
+                    then
+                        printf "Target %s unnecessarily built the kernel.\n" "${target}" >&2
+                        exit 1
+                    fi
+                    ;;
+            esac
+            case "${target}" in
+                vdso-${architecture}|kernel-interface-${architecture}|library-rosert-hosted-${architecture}|library-rosestd-hosted-${architecture}|library-elf-hosted-${architecture}|userspace-service-logger-${architecture})
+                    mapfile -t bootinit_directories < "cmake/component-build-directories/bootinit-${architecture}.txt"
+                    if [[ -e ${bootinit_directories[0]}/CMakeCache.txt || -e install/bootinit/${architecture}/bootinit ]]
+                    then
+                        printf "Target %s unnecessarily built bootinit.\n" "${target}" >&2
+                        exit 1
+                    fi
+                    ;;
+            esac
         done
     ' -- "${architecture}"

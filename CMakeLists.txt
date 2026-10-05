@@ -77,12 +77,20 @@ reaveros_add_aggregate_targets_with_modes(libraries)
 
 add_subdirectory(toolchain)
 
+# Dependencies can refer to these before their producers are registered after
+# libraries. This preserves the existing hosted/freestanding bootstrap order.
+foreach (_architecture IN LISTS REAVEROS_ARCHITECTURES)
+    add_custom_target(kernel-interface-${_architecture})
+    add_custom_target(kernel-bootinit-${_architecture})
+endforeach()
+
 reaveros_include_component(kernel
     BINARY_ROOT "${CMAKE_CURRENT_BINARY_DIR}/kernel"
     TAGS kernels
 )
 
 add_subdirectory(libraries)
+include(cmake/kernel_components.cmake)
 add_subdirectory(loaders)
 add_subdirectory(userspace)
 add_subdirectory(images)

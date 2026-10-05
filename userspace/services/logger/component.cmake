@@ -4,5 +4,4 @@ set(REAVEROS_COMPONENT_MODES hosted)
 set(REAVEROS_COMPONENT_SKIP_MODE_NAME TRUE)
 set(REAVEROS_COMPONENT_DEPENDS
     [=[all-${_architecture}-${_mode}-libraries]=]
-    [=[kernel-${_architecture}]=]
 )

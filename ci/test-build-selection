@@ -34,6 +34,12 @@ expect_no_target()
 
 configure_selection -DREAVEROS_LOADERS=uefi
 expect_target kernel-amd64
+expect_target vdso-amd64
+expect_target bootinit-amd64
+expect_target kernel-interface-amd64
+expect_target kernel-bootinit-amd64
+expect_no_target vdso-tests-amd64
+expect_no_target bootinit-tests-amd64
 expect_no_target kernel-freestanding-amd64
 expect_no_target loader-uefi-uefi-amd64
 for mode in freestanding hosted uefi
