@@ -32,6 +32,7 @@ with tempfile.TemporaryDirectory() as temporary:
         stamp = build / "toolchain" / (project + "-prefix/src") / (project + "-stamp")
         for step in ("mkdir", "download"):
             (stamp / (project + "-" + step)).touch()
+    run("python3", str(repository / "ci/fixtures/toolchain-lifecycle/seed-completed-cache.py"), str(build))
     run("cmake", "--build", str(build), "--target", "toolchain-cmake-prune", "toolchain-llvm-prune")
     # Check the simulated cache before any real build can download/rebuild tools.
     probe = run("cmake", "--build", str(build), "--target", "toolchain-llvm-install", "--", "-n")

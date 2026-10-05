@@ -89,6 +89,18 @@ cmake -S "${repo_root}" -B "${prune_build_directory}" -DREAVEROS_ENABLE_UNIT_TES
 llvm_stamp_directory="${prune_build_directory}/toolchain/toolchain-llvm-prefix/src/toolchain-llvm-stamp"
 touch "${llvm_stamp_directory}/toolchain-llvm-mkdir"
 touch "${llvm_stamp_directory}/toolchain-llvm-download"
+if cmake --build "${prune_build_directory}" --target toolchain-cmake-prune \
+    > "${test_directory}/incomplete-prune.log" 2>&1
+then
+    printf 'An incomplete toolchain installation was pruned.\n' >&2
+    exit 1
+fi
+if ! grep --fixed-strings --quiet 'refusing to prune incomplete' "${test_directory}/incomplete-prune.log"
+then
+    cat "${test_directory}/incomplete-prune.log" >&2
+    exit 1
+fi
+python3 "${self_dir}/fixtures/toolchain-lifecycle/seed-completed-cache.py" "${prune_build_directory}"
 cmake --build "${prune_build_directory}" \
     --target toolchain-cmake-prune toolchain-dosfstools-prune \
         toolchain-mtools-prune toolchain-llvm-prune >/dev/null

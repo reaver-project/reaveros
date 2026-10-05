@@ -1,6 +1,7 @@
 include_guard(GLOBAL)
 
 include("${CMAKE_CURRENT_LIST_DIR}/external_project_make.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/toolchain_contracts.cmake")
 
 function(reaveros_file_dependency output_file dependency_name identity)
     # Checkout mtimes differ between CI jobs even when the input contents do not.
@@ -13,15 +14,7 @@ function(reaveros_file_dependency output_file dependency_name identity)
     string(SHA256 _inputs_hash "${_inputs}")
 
     set(_dependency "${REAVEROS_BINARY_DIR}/toolchain/${dependency_name}")
-    file(MAKE_DIRECTORY "${REAVEROS_BINARY_DIR}/toolchain")
-    if (EXISTS "${_dependency}")
-        file(READ "${_dependency}" _previous_hash)
-    else()
-        set(_previous_hash "")
-    endif()
-    if (NOT _previous_hash STREQUAL _inputs_hash)
-        file(WRITE "${_dependency}" "${_inputs_hash}")
-    endif()
+    file(CONFIGURE OUTPUT "${_dependency}" CONTENT "${_inputs_hash}" @ONLY)
 
     set(${output_file} "${_dependency}" PARENT_SCOPE)
 endfunction()
@@ -33,53 +26,35 @@ function(reaveros_patch_dependency output_file external_project source_revision)
 endfunction()
 
 function(reaveros_add_ep_prune_target external_project)
-    ExternalProject_Get_Property(${external_project} STAMP_DIR UPDATE_DISCONNECTED)
-
-    cmake_parse_arguments(prune "REMOVE_DOWNLOADED_ARCHIVE;SOURCE_STEP_AFTER_PATCH" "SOURCE_STEP" "" ${ARGN})
-    if (prune_UNPARSED_ARGUMENTS)
-        message(FATAL_ERROR "Unexpected prune target options: ${prune_UNPARSED_ARGUMENTS}")
+    cmake_parse_arguments(PARSE_ARGV 1 prune "REMOVE_DOWNLOADED_ARCHIVE;SOURCE_STEP_AFTER_PATCH"
+        "SOURCE_STEP" "REQUIRED_INSTALLED_OUTPUTS")
+    if (prune_UNPARSED_ARGUMENTS OR prune_KEYWORDS_MISSING_VALUES)
+        message(FATAL_ERROR "Invalid prune options for '${external_project}': ${prune_UNPARSED_ARGUMENTS} ${prune_KEYWORDS_MISSING_VALUES}")
     endif()
+    ExternalProject_Get_Property(${external_project} STAMP_DIR UPDATE_DISCONNECTED)
     if (prune_SOURCE_STEP)
         set(source_step "${prune_SOURCE_STEP}")
     else()
         set(source_step set-to-tag)
     endif()
 
-    # The pruned source checkout cannot run apply-patches again.
-    set(_commands
-        COMMAND rm -rf <SOURCE_DIR> <BINARY_DIR>
-        COMMAND rm -rf ${STAMP_DIR}/${external_project}-gitclone-lastrun.txt
-    )
-    if (NOT prune_SOURCE_STEP_AFTER_PATCH)
-        list(APPEND _commands COMMAND touch ${STAMP_DIR}/${external_project}-${source_step})
-    endif()
-    if (UPDATE_DISCONNECTED)
-        list(APPEND _commands
-            COMMAND touch ${STAMP_DIR}/${external_project}-update_disconnected
-            COMMAND touch ${STAMP_DIR}/${external_project}-patch_disconnected
-        )
-    endif()
-    list(APPEND _commands
-        COMMAND touch ${STAMP_DIR}/${external_project}-skip-update
-        COMMAND touch ${STAMP_DIR}/${external_project}-update
-        COMMAND touch ${STAMP_DIR}/${external_project}-patch
-    )
-    if (prune_SOURCE_STEP_AFTER_PATCH)
-        list(APPEND _commands COMMAND touch ${STAMP_DIR}/${external_project}-${source_step})
-    endif()
-    list(APPEND _commands
-        COMMAND touch ${STAMP_DIR}/${external_project}-apply-patches
-        COMMAND touch ${STAMP_DIR}/${external_project}-invalidate-build
-        COMMAND touch ${STAMP_DIR}/${external_project}-configure
-        COMMAND touch ${STAMP_DIR}/${external_project}-build
-        COMMAND touch ${STAMP_DIR}/${external_project}-install
-    )
-    if (prune_REMOVE_DOWNLOADED_ARCHIVE)
-        # Validation images must keep the download stamp even after dropping
-        # the archive, or ordinary targets will rebuild the toolchain.
-        list(APPEND _commands
-            COMMAND rm -f <DOWNLOADED_FILE>
-        )
+    if (prune_REQUIRED_INSTALLED_OUTPUTS)
+        set_property(TARGET ${external_project} PROPERTY _REAVEROS_REQUIRED_OUTPUTS "${prune_REQUIRED_INSTALLED_OUTPUTS}")
+        set_property(TARGET ${external_project} PROPERTY _REAVEROS_PRUNE_SOURCE_STEP "${source_step}")
+        set_property(TARGET ${external_project} PROPERTY _REAVEROS_PRUNE_AFTER_PATCH "${prune_SOURCE_STEP_AFTER_PATCH}")
+        set_property(TARGET ${external_project} PROPERTY _REAVEROS_PRUNE_ARCHIVE "${prune_REMOVE_DOWNLOADED_ARCHIVE}")
+        set_property(DIRECTORY APPEND PROPERTY _REAVEROS_LIFECYCLE_PROJECTS "${external_project}")
+        get_property(_scheduled DIRECTORY PROPERTY _REAVEROS_LIFECYCLE_SCHEDULED)
+        if (NOT _scheduled)
+            set_property(DIRECTORY PROPERTY _REAVEROS_LIFECYCLE_SCHEDULED TRUE)
+            cmake_language(DEFER CALL _reaveros_finalize_toolchain_lifecycles)
+        endif()
+        find_package(Python3 3.9 REQUIRED COMPONENTS Interpreter)
+        set(_commands COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../toolchain/installed-state"
+            prune "${REAVEROS_BINARY_DIR}/toolchain/${external_project}-lifecycle.json")
+    else()
+        _reaveros_ep_legacy_prune_commands(_commands "${external_project}" "${source_step}"
+            "${prune_SOURCE_STEP_AFTER_PATCH}" "${prune_REMOVE_DOWNLOADED_ARCHIVE}")
     endif()
 
     ExternalProject_Add_Step(${external_project}
@@ -96,21 +71,14 @@ function(reaveros_add_ep_prune_target external_project)
 endfunction()
 
 function(reaveros_add_ep_source_identity_step external_project identity)
-    cmake_parse_arguments(source "" "" "DEPENDEES" ${ARGN})
-    if (source_UNPARSED_ARGUMENTS OR NOT source_DEPENDEES)
+    set_property(TARGET ${external_project} PROPERTY _REAVEROS_SOURCE_ID "${identity}")
+    cmake_parse_arguments(PARSE_ARGV 2 source "" "" "DEPENDEES")
+    if (source_UNPARSED_ARGUMENTS OR source_KEYWORDS_MISSING_VALUES OR NOT source_DEPENDEES)
         message(FATAL_ERROR "Invalid source identity step for ${external_project}")
     endif()
 
     set(dependency "${REAVEROS_BINARY_DIR}/toolchain/${external_project}-source-inputs")
-    file(MAKE_DIRECTORY "${REAVEROS_BINARY_DIR}/toolchain")
-    if (EXISTS "${dependency}")
-        file(READ "${dependency}" previous_identity)
-    else()
-        set(previous_identity "")
-    endif()
-    if (NOT previous_identity STREQUAL "${identity}\n")
-        file(WRITE "${dependency}" "${identity}\n")
-    endif()
+    file(CONFIGURE OUTPUT "${dependency}" CONTENT "${identity}\n" @ONLY)
 
     reaveros_file_dependency(helper_dependency "${external_project}-invalidation-inputs"
         invalidate-stale-build "${REAVEROS_SOURCE_DIR}/toolchain/invalidate-stale-build")
@@ -125,7 +93,7 @@ function(reaveros_add_ep_source_identity_step external_project identity)
 
     ExternalProject_Add_Step(${external_project}
         invalidate-build
-        COMMAND bash ${REAVEROS_SOURCE_DIR}/toolchain/invalidate-stale-build
+        COMMAND bash "${REAVEROS_SOURCE_DIR}/toolchain/invalidate-stale-build"
             "${REAVEROS_BINARY_DIR}" ${external_project}
             <BINARY_DIR> <INSTALL_DIR> "${identity}"
         DEPENDEES ${source_DEPENDEES}
@@ -135,6 +103,9 @@ function(reaveros_add_ep_source_identity_step external_project identity)
 endfunction()
 
 function(reaveros_add_ep_fetch_tag_target external_project revision)
+    if (NOT ARGC EQUAL 2 OR "${revision}" STREQUAL "")
+        message(FATAL_ERROR "Git source selection for '${external_project}' requires one revision.")
+    endif()
     ExternalProject_Get_Property(${external_project}
         STAMP_DIR GIT_REPOSITORY GIT_TAG UPDATE_DISCONNECTED)
 
@@ -161,16 +132,5 @@ function(reaveros_add_ep_fetch_tag_target external_project revision)
         INDEPENDENT TRUE
     )
 
-    add_custom_command(TARGET ${external_project} POST_BUILD
-        COMMAND touch ${STAMP_DIR}/${external_project}-set-to-tag
-        COMMAND touch ${STAMP_DIR}/${external_project}-invalidate-build
-        COMMAND touch ${STAMP_DIR}/${external_project}-skip-update
-        COMMAND touch ${STAMP_DIR}/${external_project}-patch
-        COMMAND touch ${STAMP_DIR}/${external_project}-apply-patches
-        COMMAND touch ${STAMP_DIR}/${external_project}-configure
-        COMMAND touch ${STAMP_DIR}/${external_project}-build
-        COMMAND touch ${STAMP_DIR}/${external_project}-install
-        COMMAND rm -rf ${STAMP_DIR}/${external_project}-prune
-        VERBATIM
-    )
+    _reaveros_ep_refresh_stamps_after_build("${external_project}")
 endfunction()

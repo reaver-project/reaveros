@@ -1,0 +1,166 @@
+#!/usr/bin/env python3
+
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import sys
+
+
+def fail(message):
+    sys.exit("Toolchain installed state: " + message)
+
+
+if len(sys.argv) != 3 or sys.argv[1] not in ("check", "record", "prune"):
+    fail("usage: installed-state <check|record|prune> <contract.json>")
+action = sys.argv[1]
+contract = json.loads(Path(sys.argv[2]).read_text())
+if contract.get("version") != 1:
+    fail("unsupported contract version")
+root = Path(contract["root"]).resolve()
+project = contract["project"]
+if root == Path("/") or not re.fullmatch(r"toolchain-[a-z0-9-]+", project):
+    fail("invalid root or project")
+prefix = root / "toolchain" / (project + "-prefix")
+expected = {
+    "source": prefix / "src" / project,
+    "binary": prefix / "src" / (project + "-build"),
+    "install": root / "install/toolchain" / project.removeprefix("toolchain-"),
+    "stamp": prefix / "src" / (project + "-stamp"),
+}
+directories = {name: Path(value) for name, value in contract["directories"].items()}
+for name, path in expected.items():
+    if directories[name].resolve() != path or directories[name].is_symlink():
+        fail(f"refusing unexpected {name} directory for {project}: {directories[name]}")
+stamps = {name: Path(value) for name, value in contract["stamps"].items()}
+for name, path in stamps.items():
+    expected_stamp = root / "toolchain/CMakeFiles" / (project + "-complete") if name == "complete" \
+        else expected["stamp"] / (project + "-" + name)
+    if path != expected_stamp or path.is_symlink():
+        fail(f"invalid {name} stamp for {project}")
+required = []
+for output in contract["required_outputs"]:
+    path = Path(output)
+    if path.is_absolute() or ".." in path.parts:
+        fail(f"invalid installed output for {project}: {output}")
+    required.append(directories["install"] / path)
+if not required:
+    fail(f"{project} must declare installed outputs")
+record = root / "toolchain" / (project + "-installed-state.json")
+if record.is_symlink():
+    fail(f"invalid installed state path for {project}")
+archive = contract.get("archive", "")
+if archive and not Path(archive).resolve().is_relative_to(prefix):
+    fail(f"refusing unexpected archive path for {project}: {archive}")
+
+
+def write_state(pruned):
+    state = {"version": 1, "identity": contract["identity"], "pruned": pruned}
+    contents = json.dumps(state, sort_keys=True, indent=2) + "\n"
+    if record.exists() and record.read_text() == contents:
+        return
+    record.parent.mkdir(parents=True, exist_ok=True)
+    temporary = record.with_suffix(".tmp")
+    temporary.write_text(contents)
+    temporary.replace(record)
+
+
+def legacy_matches():
+    # Retained step stamps attest to the inputs actually consumed before this
+    # completion record existed. Adoption requires all installed outputs too.
+    if not stamps["install"].is_file():
+        return False
+    for dependency, step in contract["legacy_inputs"].items():
+        path = Path(dependency)
+        if path.exists() and (not stamps[step].is_file()
+                or stamps[step].stat().st_mtime_ns < path.stat().st_mtime_ns):
+            return False
+    identity = root / "toolchain" / (project + "-source-identity")
+    return not identity.exists() or identity.read_text().strip() == contract["identity"]["source"]
+
+
+def populated(name):
+    path = directories[name]
+    return path.is_dir() and any(entry.name != ".git" for entry in path.iterdir())
+
+
+def clear_steps(steps):
+    for step in steps:
+        stamps[step].unlink(missing_ok=True)
+    stamps["done"].unlink(missing_ok=True)
+    stamps["complete"].unlink(missing_ok=True)
+    stamps["prune"].unlink(missing_ok=True)
+
+
+def recover(state, missing):
+    previous = state.get("identity", {}) if state else {}
+    changed = previous != contract["identity"] if state else not legacy_matches()
+    restore = not populated("source") or not populated("binary")
+    if changed:
+        for name in ("binary", "install"):
+            if directories[name].exists():
+                shutil.rmtree(directories[name])
+        directories["binary"].mkdir(parents=True, exist_ok=True)
+        directories["install"].mkdir(parents=True, exist_ok=True)
+        if not state or previous.get("source") != contract["identity"]["source"]:
+            restore = True
+        elif not restore:
+            clear_steps(["apply-patches", "invalidate-build", "configure", "build", "install"])
+    if restore:
+        clear_steps([step for step in stamps if step not in ("complete", "done", "prune")])
+        (directories["stamp"] / (project + "-gitclone-lastrun.txt")).unlink(missing_ok=True)
+    elif not changed:
+        clear_steps(["install"])
+    record.unlink(missing_ok=True)
+    reason = "changed installed inputs" if changed else "missing installed outputs" if missing else "unverified legacy installation"
+    print(f"{project}: recovering {reason}", flush=True)
+
+
+missing = [str(path) for path in required if not path.is_file() or path.stat().st_size == 0
+           or (path.relative_to(directories["install"]).parts[0] in ("bin", "sbin")
+               and not os.access(path, os.X_OK))]
+try:
+    state = json.loads(record.read_text()) if record.exists() else None
+except ValueError as error:
+    fail(f"invalid installation record for {project}: {error}")
+if state and (state.get("version") != 1 or not isinstance(state.get("identity"), dict)):
+    fail(f"unsupported installation record for {project}")
+if action == "record":
+    if missing:
+        fail(f"{project} installation is incomplete: {missing}")
+    if not stamps["install"].is_file():
+        fail(f"{project} has no successful install stamp")
+    write_state(bool(state and state.get("pruned")) and not populated("binary"))
+elif action == "check":
+    if state and state.get("identity") == contract["identity"] and not missing:
+        # A scheduling-only configure-command change cannot rebuild a pruned
+        # toolchain. Its output identity is unchanged, so retain its later steps.
+        cfgcmd = next((Path(path) for path, step in contract["legacy_inputs"].items()
+                       if step == "configure"), None)
+        if state.get("pruned") and cfgcmd and cfgcmd.exists() \
+                and (not stamps["configure"].exists()
+                     or cfgcmd.stat().st_mtime_ns > stamps["configure"].stat().st_mtime_ns):
+            for step in ("configure", "build", "install", "done", "complete"):
+                stamps[step].touch()
+    elif state or stamps["install"].exists():
+        if not state and not missing and legacy_matches():
+            write_state(not populated("source") or not populated("binary"))
+            print(f"{project}: adopted verified legacy installation", flush=True)
+        else:
+            recover(state, missing)
+elif action == "prune":
+    if not stamps["install"].is_file() or missing or (state and state.get("identity") != contract["identity"]) \
+            or (not state and not legacy_matches()):
+        fail(f"refusing to prune incomplete or stale installation of {project}: {missing}")
+    for name in ("source", "binary"):
+        if directories[name].exists():
+            shutil.rmtree(directories[name])
+    (directories["stamp"] / (project + "-gitclone-lastrun.txt")).unlink(missing_ok=True)
+    if archive:
+        Path(archive).unlink(missing_ok=True)
+    # The Make adapter supplies the dependency ordering of retained stamps.
+    for step in contract["prune_order"]:
+        stamps[step].parent.mkdir(parents=True, exist_ok=True)
+        stamps[step].touch()
+    write_state(True)

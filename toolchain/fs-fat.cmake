@@ -19,7 +19,7 @@ ExternalProject_Add(toolchain-dosfstools
     BUILD_COMMAND $(MAKE)
     INSTALL_COMMAND $(MAKE) install
 )
-reaveros_add_ep_prune_target(toolchain-dosfstools)
+reaveros_add_ep_prune_target(toolchain-dosfstools REQUIRED_INSTALLED_OUTPUTS sbin/mkfs.fat)
 reaveros_add_ep_fetch_tag_target(toolchain-dosfstools ${REAVEROS_DOSFSTOOLS_REVISION})
 reaveros_add_ep_source_identity_step(toolchain-dosfstools ${REAVEROS_DOSFSTOOLS_REVISION}
     DEPENDEES set-to-tag)
@@ -44,7 +44,7 @@ ExternalProject_Add(toolchain-mtools
     BUILD_COMMAND $(MAKE)
     INSTALL_COMMAND $(MAKE) install
 )
-reaveros_add_ep_prune_target(toolchain-mtools)
+reaveros_add_ep_prune_target(toolchain-mtools REQUIRED_INSTALLED_OUTPUTS bin/mcopy bin/mformat)
 reaveros_add_ep_source_identity_step(toolchain-mtools ${REAVEROS_MTOOLS_SHA256}
     DEPENDEES download update patch)
 

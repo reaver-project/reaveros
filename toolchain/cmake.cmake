@@ -39,7 +39,8 @@ ExternalProject_Add_Step(toolchain-cmake
     DEPENDS ${patch_dependency}
     WORKING_DIRECTORY <SOURCE_DIR>
 )
-reaveros_add_ep_prune_target(toolchain-cmake)
+reaveros_add_ep_prune_target(toolchain-cmake
+    REQUIRED_INSTALLED_OUTPUTS bin/cmake bin/ctest bin/cpack)
 reaveros_add_ep_fetch_tag_target(toolchain-cmake ${REAVEROS_CMAKE_REVISION})
 reaveros_add_ep_source_identity_step(toolchain-cmake ${REAVEROS_CMAKE_REVISION}
     DEPENDEES set-to-tag)

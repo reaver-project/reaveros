@@ -151,10 +151,29 @@ ExternalProject_Add_Step(toolchain-llvm
     DEPENDERS configure
     WORKING_DIRECTORY <SOURCE_DIR>
 )
+string(REGEX REPLACE "^llvmorg-([0-9]+).*" "\\1" _llvm_version "${REAVEROS_LLVM_TAG}")
+set(_required_llvm_outputs bin/clang bin/clang++ bin/ld.lld bin/lld-link
+    bin/llvm-ar bin/llvm-ranlib bin/llvm-readelf bin/llvm-readobj bin/llvm-objcopy bin/llvm-nm
+    "lib/clang/${_llvm_version}/include/stddef.h")
+foreach (_architecture IN LISTS REAVEROS_ARCHITECTURES)
+    foreach (_mode freestanding hosted)
+        list(APPEND _required_llvm_outputs
+            "lib/clang/${_llvm_version}/lib/${_reaveros_${_architecture}_${_mode}_target}/libclang_rt.builtins.a")
+    endforeach()
+    if (REAVEROS_ENABLE_UNIT_TESTS)
+        list(APPEND _required_llvm_outputs
+            "include/c++/v1/cstddef"
+            "include/${_reaveros_${_architecture}_tests_target}/c++/v1/__config_site")
+        foreach (_library libc++.so libc++abi.so libunwind.so)
+            list(APPEND _required_llvm_outputs "lib/${_reaveros_${_architecture}_tests_target}/${_library}")
+        endforeach()
+    endif()
+endforeach()
 reaveros_add_ep_prune_target(toolchain-llvm
     SOURCE_STEP hydrate-source
     SOURCE_STEP_AFTER_PATCH
     REMOVE_DOWNLOADED_ARCHIVE
+    REQUIRED_INSTALLED_OUTPUTS ${_required_llvm_outputs}
 )
 
 # install compiler-rt to the appropriate sysroots
