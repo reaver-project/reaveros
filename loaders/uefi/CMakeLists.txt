@@ -30,7 +30,7 @@ set_target_properties(loader-uefi
 add_custom_target(loader-uefi-pe ALL DEPENDS ${CMAKE_BINARY_DIR}/loader-uefi)
 
 install(FILES ${CMAKE_BINARY_DIR}/loader-uefi
-    DESTINATION ${CMAKE_INSTALL_PREFIX}
+    DESTINATION .
 )
 
 if (REAVEROS_ENABLE_UNIT_TESTS)

@@ -17,5 +17,5 @@ target_compile_options(logger PRIVATE -g -fno-rtti)
 reaveros_require_linker_dependencies(logger CXX)
 
 install(TARGETS logger
-    DESTINATION ${CMAKE_INSTALL_PREFIX}
+    DESTINATION .
 )

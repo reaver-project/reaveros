@@ -60,7 +60,7 @@ if (NOT REAVEROS_ENABLE_UNIT_TESTS)
     add_custom_target(kernel-flat ALL DEPENDS ${CMAKE_BINARY_DIR}/kernel)
 
     install(FILES ${CMAKE_BINARY_DIR}/kernel
-        DESTINATION ${CMAKE_INSTALL_PREFIX}
+        DESTINATION .
     )
 else()
     enable_testing()

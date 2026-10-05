@@ -14,8 +14,6 @@ if (_library_type STREQUAL "SHARED")
     reaveros_require_linker_dependencies(archive CXX)
 endif()
 
-set(install_dir ${CMAKE_INSTALL_PREFIX}/usr/lib)
-
 install(TARGETS archive
-    DESTINATION ${install_dir}
+    DESTINATION usr/lib
 )
