@@ -8,6 +8,8 @@ configure_file("${REAVEROS_SOURCE_DIR}/cmake/project_policy.cmake.in"
     "${REAVEROS_BINARY_DIR}/install/toolchain/files/project-policy.cmake" @ONLY)
 configure_file("${REAVEROS_SOURCE_DIR}/cmake/linker_policy.cmake"
     "${REAVEROS_BINARY_DIR}/install/toolchain/files/linker-policy.cmake" COPYONLY)
+configure_file("${REAVEROS_SOURCE_DIR}/cmake/native_tests.cmake"
+    "${REAVEROS_BINARY_DIR}/install/toolchain/files/native-tests.cmake" COPYONLY)
 
 file(GLOB toolchain_files
     RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}/files

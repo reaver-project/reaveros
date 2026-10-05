@@ -11,6 +11,10 @@ foreach (_language IN ITEMS C CXX)
     set(CMAKE_${_language}_FLAGS "${_reaveros_warnings} ${CMAKE_${_language}_FLAGS}")
 endforeach()
 
+if (REAVEROS_BUILD_MODE STREQUAL "tests")
+    include("${CMAKE_CURRENT_LIST_DIR}/native-tests.cmake")
+endif()
+
 if (NOT DEFINED CMAKE_C_STANDARD)
     set(CMAKE_C_STANDARD @REAVEROS_C_STANDARD@)
 elseif (CMAKE_C_STANDARD STREQUAL "90" OR CMAKE_C_STANDARD STREQUAL "99"
