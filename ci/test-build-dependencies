@@ -17,10 +17,10 @@ if Path(sys.argv[0]).name == "docker":
     script = script.replace("cmake /reaveros", "cmake " + shlex.quote(os.environ["TEST_SOURCE"])
         + " -DTEST_REPOSITORY=" + shlex.quote(os.environ["TEST_REPOSITORY"])
         + " -DTEST_BETA_DEPENDS_ON_ALPHA=" + os.environ["TEST_DEPENDENCY"])
-    # The native dependency fixture has no installed cross toolchain. Its
-    # contract preflight is covered separately with the real build image.
+    # Cross-toolchain contract checks run separately with the real build image.
     script = script.replace("python3 /reaveros/ci/test-toolchain-modes /build", ":")
     script = script.replace("python3 /reaveros/ci/test-child-cmake /build", ":")
+    script = script.replace("python3 /reaveros/ci/test-kernel-components /build", ":")
     result = subprocess.run(["bash", "-c", script] + arguments[4:])
     sys.exit(result.returncode)
 

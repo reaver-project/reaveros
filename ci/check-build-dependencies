@@ -72,4 +72,5 @@ docker run --rm \
                     ;;
             esac
         done
+        python3 /reaveros/ci/test-kernel-components /build
     ' -- "${architecture}"
