@@ -68,9 +68,6 @@ reaveros_add_aggregate_targets("")
 add_custom_target(all-toolchain)
 
 option(REAVEROS_ENABLE_UNIT_TESTS "Enable unit tests for project components." OFF)
-if (REAVEROS_ENABLE_UNIT_TESTS)
-    set(_REAVEROS_TEST_TARGET test)
-endif()
 
 reaveros_add_aggregate_targets(kernels)
 reaveros_add_aggregate_targets_with_modes(libraries)
