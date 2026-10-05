@@ -1,6 +1,6 @@
 add_custom_target(build-tests)
 
-add_definitions(-Wno-user-defined-literals)
+add_compile_options(-Wno-user-defined-literals)
 
 file(GLOB_RECURSE test_files RELATIVE "${CMAKE_CURRENT_LIST_DIR}" CONFIGURE_DEPENDS
     *.test.cpp
@@ -13,7 +13,7 @@ foreach (file IN LISTS test_files)
 
     add_executable(${exe_name} "${file}")
     target_compile_options(${exe_name} PRIVATE -UNDEBUG)
-    target_link_libraries(${exe_name} rosestd)
+    target_link_libraries(${exe_name} PRIVATE rosestd)
     add_dependencies(build-tests ${exe_name})
 
     add_test(${test_name} ${exe_name})

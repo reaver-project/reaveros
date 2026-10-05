@@ -49,10 +49,8 @@ add_library(vdso SHARED
 )
 add_dependencies(vdso thorn-generation)
 
-set_target_properties(vdso
-    PROPERTIES
-        LINK_FLAGS "-z separate-loadable-segments"
-)
+target_link_options(vdso PRIVATE LINKER:-z,separate-loadable-segments)
+reaveros_require_linker_dependencies(vdso CXX)
 
 string(REGEX REPLACE
     "sysroots/${REAVEROS_ARCH}-freestanding$"
@@ -73,10 +71,8 @@ add_library(syscall_table STATIC
 )
 add_dependencies(syscall_table thorn-generation)
 
-set_target_properties(syscall_table
-    PROPERTIES
-        COMPILE_FLAGS "-I'${CMAKE_SOURCE_DIR}' -g -mcmodel=kernel"
-)
+target_include_directories(syscall_table PRIVATE "${CMAKE_SOURCE_DIR}")
+target_compile_options(syscall_table PRIVATE -g -mcmodel=kernel)
 
 file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/incbin_vdso.asm" CONTENT
     "

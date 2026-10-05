@@ -30,10 +30,12 @@ if (NOT REAVEROS_ENABLE_UNIT_TESTS)
     )
 
     target_link_libraries(kernel-elf
+        PRIVATE
         bootinit-incbin
         vdso-incbin
         syscall_table
         rosestd
+        clang_rt.builtins
     )
 
     set(linker_script_in ${CMAKE_CURRENT_SOURCE_DIR}/arch/${REAVEROS_ARCH}/kernel.lds.in)
@@ -41,12 +43,13 @@ if (NOT REAVEROS_ENABLE_UNIT_TESTS)
 
     configure_file(${linker_script_in} ${linker_script} @ONLY)
 
-    set_target_properties(kernel-elf
-        PROPERTIES
-            COMPILE_FLAGS "-g -mcmodel=kernel -DREAVEROS_KERNEL_SOURCE_ROOT='\"${CMAKE_SOURCE_DIR}\"'"
-            LINK_FLAGS "-Wl,-T,'${linker_script}' -static -Wl,-Map=kernel.map -lclang_rt.builtins -ffreestanding"
-            LINK_DEPENDS ${linker_script}
-    )
+    target_compile_options(kernel-elf PRIVATE -g -mcmodel=kernel)
+    target_compile_definitions(kernel-elf PRIVATE
+        "$<$<COMPILE_LANGUAGE:CXX>:REAVEROS_KERNEL_SOURCE_ROOT=\"${CMAKE_SOURCE_DIR}\">")
+    target_link_options(kernel-elf PRIVATE
+        "LINKER:-T,${linker_script}" LINKER:-Map,kernel.map -static -ffreestanding)
+    set_property(TARGET kernel-elf PROPERTY LINK_DEPENDS "${linker_script}")
+    reaveros_require_linker_dependencies(kernel-elf CXX)
 
     add_custom_command(OUTPUT ${CMAKE_BINARY_DIR}/kernel
         DEPENDS kernel-elf

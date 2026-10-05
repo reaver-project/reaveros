@@ -1,6 +1,6 @@
 add_custom_target(build-tests)
 
-add_definitions(-DREAVEROS_TESTING)
+add_compile_definitions(REAVEROS_TESTING)
 
 file(GLOB_RECURSE test_files RELATIVE "${CMAKE_CURRENT_LIST_DIR}" CONFIGURE_DEPENDS
     *.test.cpp

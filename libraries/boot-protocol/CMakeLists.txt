@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.31)
 
-project(reaveros-boot-protocol CXX)
+project(reaveros-boot-protocol LANGUAGES NONE)
 
 add_subdirectory(include)
 

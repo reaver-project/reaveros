@@ -6,25 +6,21 @@ else()
     set(_library_type SHARED)
 endif()
 
-set(CMAKE_SHARED_LINKER_FLAGS -nostdlib)
-
 add_library(rosestd ${_library_type}
     ${sources}
 )
+target_compile_options(rosestd PRIVATE -g)
+target_link_options(rosestd PRIVATE -nostdlib)
 
 if (NOT REAVEROS_IS_FREESTANDING AND NOT REAVEROS_ENABLE_UNIT_TESTS)
-    target_link_libraries(rosestd -Wl,--whole-archive rosert)
-
-    set_target_properties(rosestd
-        PROPERTIES
-            LINK_DEPENDS ${CMAKE_SYSROOT}/usr/lib/librosert.a
-    )
+    # ReaverOS does not define CMake's WHOLE_ARCHIVE library feature. Bound
+    # the linker state explicitly so later libraries retain normal behavior.
+    target_link_libraries(rosestd PRIVATE -Wl,--whole-archive rosert -Wl,--no-whole-archive)
 endif()
 
-set_target_properties(rosestd
-    PROPERTIES
-        COMPILE_FLAGS "-g"
-)
+if (_library_type STREQUAL "SHARED")
+    reaveros_require_linker_dependencies(rosestd CXX)
+endif()
 
 set(install_dir ${CMAKE_INSTALL_PREFIX}/usr/lib)
 
