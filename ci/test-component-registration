@@ -58,6 +58,10 @@ with tempfile.TemporaryDirectory() as temporary:
     assert set(contract["all-amd64-libraries"]["MANUALLY_ADDED_DEPENDENCIES"]) == {
         "library-" + name + "-" + mode + "-amd64"
         for name in ("alpha", "beta") for mode in modes if mode != "tests"}
+    assert "internal-hosted-amd64" not in contract["all-amd64"]["MANUALLY_ADDED_DEPENDENCIES"]
+    run("make", "-C", str(build), "-j4", "internal-hosted-amd64")
+    internal_cache = build / "internal-hosted-amd64-prefix/src/internal-hosted-amd64-build/CMakeCache.txt"
+    assert "REGISTRATION_NOTE:STRING=literal words amd64-hosted" in internal_cache.read_text()
     for name in ("alpha", "beta"):
         target = "library-" + name + "-tests-amd64"
         assert contract[target]["_REAVEROS_COMPONENT_LABELS"] == ["amd64", "libraries", "library-" + name]

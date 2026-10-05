@@ -106,9 +106,11 @@ function(reaveros_add_component)
         string(TOUPPER "${_mode}" _mode_uppercase)
         list(APPEND _dependency_fields "DEPENDS_${_mode_uppercase}")
     endforeach()
-    set(_scalar_fields NAME SOURCE_DIR BINARY_ROOT PREFIX INSTALL_PATH SKIP_MODE_NAME)
+    set(_scalar_fields NAME SOURCE_DIR BINARY_ROOT PREFIX INSTALL_PATH
+        SKIP_MODE_NAME REGISTER_AGGREGATES INSTALL_TRANSFER_FROM)
     cmake_parse_arguments(PARSE_ARGV 0 _component
-        "" "${_scalar_fields}" "ARCHITECTURES;MODES;TAGS;${_dependency_fields}")
+        "" "${_scalar_fields}"
+        "ARCHITECTURES;MODES;TAGS;CMAKE_ARGS;INSTALL_TRANSFER_ROOTS;${_dependency_fields}")
 
     set(_context "Component '${_component_NAME}' (${_component_SOURCE_DIR})")
     if (_component_UNPARSED_ARGUMENTS)
@@ -141,9 +143,18 @@ function(reaveros_add_component)
     if (NOT DEFINED _component_SKIP_MODE_NAME)
         set(_component_SKIP_MODE_NAME FALSE)
     endif()
-    string(TOUPPER "${_component_SKIP_MODE_NAME}" _component_SKIP_MODE_NAME)
-    if (NOT _component_SKIP_MODE_NAME MATCHES "^(ON|OFF|TRUE|FALSE|YES|NO|Y|N|0|1)$")
-        message(FATAL_ERROR "${_context}: SKIP_MODE_NAME must be a boolean.")
+    if (NOT DEFINED _component_REGISTER_AGGREGATES)
+        set(_component_REGISTER_AGGREGATES TRUE)
+    endif()
+    foreach (_field SKIP_MODE_NAME REGISTER_AGGREGATES)
+        string(TOUPPER "${_component_${_field}}" _component_${_field})
+        if (NOT _component_${_field} MATCHES "^(ON|OFF|TRUE|FALSE|YES|NO|Y|N|0|1)$")
+            message(FATAL_ERROR "${_context}: ${_field} must be a boolean.")
+        endif()
+    endforeach()
+    if ((_component_INSTALL_TRANSFER_FROM AND NOT _component_INSTALL_TRANSFER_ROOTS)
+            OR (_component_INSTALL_TRANSFER_ROOTS AND NOT _component_INSTALL_TRANSFER_FROM))
+        message(FATAL_ERROR "${_context}: install transfer requires both FROM and ROOTS.")
     endif()
 
     foreach (_field ARCHITECTURES MODES)
@@ -201,7 +212,20 @@ function(reaveros_add_component)
                 "${_architecture}" "${_mode}" "${_context}")
             _reaveros_expand_component_value(_install_path "${_component_INSTALL_PATH}"
                 "${_architecture}" "${_mode}" "${_context}")
+            _reaveros_expand_component_value(_cmake_args "${_component_CMAKE_ARGS}"
+                "${_architecture}" "${_mode}" "${_context}")
             set(_project_prefix "${_component_BINARY_ROOT}/${_component_name}-prefix")
+
+            set(_transfer_file "")
+            if (_component_INSTALL_TRANSFER_FROM)
+                _reaveros_expand_component_value(_transfer_from "${_component_INSTALL_TRANSFER_FROM}"
+                    "${_architecture}" "${_mode}" "${_context}")
+                _reaveros_expand_component_value(_transfer_roots "${_component_INSTALL_TRANSFER_ROOTS}"
+                    "${_architecture}" "${_mode}" "${_context}")
+                string(JOIN "\n" _transfer_roots ${_transfer_roots})
+                set(_transfer_file "${REAVEROS_BINARY_DIR}/cmake/install-transfers/${_component_name}.txt")
+                file(GENERATE OUTPUT "${_transfer_file}" CONTENT "${_transfer_from}\n${_transfer_roots}\n")
+            endif()
 
             ExternalProject_Add(${_component_name}
                 EXCLUDE_FROM_ALL TRUE
@@ -223,6 +247,7 @@ function(reaveros_add_component)
                     "-DREAVEROS_INSTALL_PROJECT=${_component_name}"
                     "-DREAVEROS_INSTALL_BINARY_DIR=<BINARY_DIR>"
                     "-DREAVEROS_INSTALL_CMAKE=${REAVEROS_CMAKE}"
+                    "-DREAVEROS_INSTALL_TRANSFER_FILE=${_transfer_file}"
                     -P "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/install_component.cmake"
 
                 CMAKE_COMMAND "${REAVEROS_CMAKE}"
@@ -236,6 +261,7 @@ function(reaveros_add_component)
                     "-DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>"
                     "-DREAVEROS_ARCH=${_architecture}"
                     "-DREAVEROS_THORN=${REAVEROS_THORN}"
+                    ${_cmake_args}
             )
 
             # Existing child manifests let the ownership check adopt a build
@@ -262,10 +288,12 @@ function(reaveros_add_component)
                 )
             endif()
 
-            reaveros_register_target(${_component_name} ${_architecture} ${_mode}
-                ${_component_TAGS} ${_component_NAME})
+            if (_component_REGISTER_AGGREGATES)
+                reaveros_register_target(${_component_name} ${_architecture} ${_mode}
+                    ${_component_TAGS} ${_component_NAME})
+            endif()
 
-            if (_mode STREQUAL "tests")
+            if (_mode STREQUAL "tests" AND _component_REGISTER_AGGREGATES)
                 reaveros_register_target(${_component_name} ${_architecture} ${_mode}
                     ${_component_TAGS} ${_component_NAME} build-tests)
 
@@ -305,6 +333,7 @@ function(reaveros_include_component _directory)
         REAVEROS_COMPONENT_MODES
         REAVEROS_COMPONENT_SKIP_MODE_NAME
         REAVEROS_COMPONENT_DEPENDS
+        REAVEROS_COMPONENT_CMAKE_ARGS
     )
     foreach (_mode IN LISTS _reaveros_modes)
         string(TOUPPER "${_mode}" _mode_uppercase)
@@ -343,6 +372,7 @@ function(reaveros_include_component _directory)
         INSTALL_PATH "${REAVEROS_COMPONENT_INSTALL_PATH}"
         SKIP_MODE_NAME "${REAVEROS_COMPONENT_SKIP_MODE_NAME}"
         DEPENDS ${REAVEROS_COMPONENT_DEPENDS}
+        CMAKE_ARGS ${REAVEROS_COMPONENT_CMAKE_ARGS}
         ${_mode_dependencies}
     )
 endfunction()

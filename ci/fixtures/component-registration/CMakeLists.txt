@@ -38,6 +38,13 @@ elseif (NOT TEST_CASE OR TEST_CASE STREQUAL "metadata")
     set(REAVEROS_COMPONENT_DEPENDS_HOSTED accidental-caller-dependency)
     reaveros_include_component(alpha PREFIX library TAGS libraries)
     reaveros_include_component(beta PREFIX library TAGS libraries)
+    reaveros_add_component(
+        NAME internal SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/beta"
+        BINARY_ROOT "${CMAKE_CURRENT_BINARY_DIR}" REGISTER_AGGREGATES FALSE
+        ARCHITECTURES amd64 MODES hosted INSTALL_PATH [=[internal/${_architecture}]=]
+        DEPENDS common-amd64
+        CMAKE_ARGS "-DREGISTRATION_NOTE:STRING=literal words \${_architecture}-\${_mode}"
+    )
 else()
     set(_name alpha)
     set(_source "${CMAKE_CURRENT_SOURCE_DIR}/alpha")

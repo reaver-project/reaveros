@@ -1,0 +1,122 @@
+#!/usr/bin/env python3
+
+from pathlib import Path
+import os
+import shutil
+import subprocess
+import tempfile
+
+
+repository = Path(__file__).resolve().parent.parent
+fixture = repository / "ci/fixtures/component-install"
+
+
+def run(*command, succeeds=True):
+    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    if (result.returncode == 0) != succeeds:
+        raise RuntimeError(result.stdout)
+    return result.stdout
+
+
+for persistent in (True, False):
+    with tempfile.TemporaryDirectory() as temporary:
+        directory = Path(temporary)
+        source = directory / "source with spaces"
+        shutil.copytree(fixture, source)
+        for name in ("alpha", "beta"):
+            component = source / name
+            shutil.copytree(fixture / "component", component)
+            (component / "files").mkdir()
+            (component / "files" / (name + " header.h")).write_text(name + " header\n")
+            (component / "hosted.h").write_text(name + " hosted\n")
+        alpha_cmake = source / "alpha/CMakeLists.txt"
+        beta_cmake = source / "beta/CMakeLists.txt"
+        (source / "alpha/obsolete.h").write_text("obsolete interface\n")
+        # Distinct providers may have identical file timestamps. Publication
+        # must compare their bytes rather than accepting timestamp equality.
+        for name in ("alpha", "beta"):
+            os.utime(source / name / "hosted.h", (1700000000, 1700000000))
+        alpha_cmake.write_text(alpha_cmake.read_text() + '\ninstall(FILES obsolete.h DESTINATION '
+            '"${CMAKE_INSTALL_PREFIX}/../amd64-hosted/usr/include/alpha")\n')
+        build = directory / "build with spaces"
+
+        def configure(**options):
+            run("cmake", "-S", str(source), "-B", str(build), "-G", "Unix Makefiles",
+                "-DTEST_REPOSITORY=" + str(repository),
+                *("-D" + key + "=" + value for key, value in options.items()))
+
+        def make(target="components", succeeds=True):
+            return run("make", "-C", str(build), "-j4", target, succeeds=succeeds)
+
+        configure()
+        make()
+        ownership = build / "cmake/install-ownership"
+        old_owner = ownership / "alpha-freestanding-amd64.txt"
+        new_owner = ownership / "beta-freestanding-amd64.txt"
+        old_manifest = build / "alpha-freestanding-amd64-prefix/src/alpha-freestanding-amd64-build/install_manifest.txt"
+        new_manifest = build / "beta-freestanding-amd64-prefix/src/beta-freestanding-amd64-build/install_manifest.txt"
+        interface = build / "install/sysroots/amd64-hosted/usr/include/alpha"
+        header = interface / "hosted.h"
+        obsolete = interface / "obsolete.h"
+        neighbor = build / "install/sysroots/amd64-freestanding/usr/include/alpha header.h"
+        neighbor_mtime = neighbor.stat().st_mtime_ns
+        # The new source removes the old install rules, but its previous child
+        # manifest remains until the old component is next built.
+        alpha_cmake.write_text(alpha_cmake.read_text()
+            .replace('install(FILES hosted.h\n    DESTINATION "${CMAKE_INSTALL_PREFIX}/../amd64-hosted/usr/include/${_name}")', '')
+            .replace('install(FILES obsolete.h DESTINATION "${CMAKE_INSTALL_PREFIX}/../amd64-hosted/usr/include/alpha")', ''))
+        beta_cmake.write_text(beta_cmake.read_text() + '\ninstall(FILES hosted.h DESTINATION '
+            '"${CMAKE_INSTALL_PREFIX}/../amd64-hosted/usr/include/alpha")\n')
+        configure(TEST_BETA_INSTALL_TRANSFER_FROM="alpha-freestanding-amd64",
+            TEST_BETA_INSTALL_TRANSFER_ROOTS="sysroots/amd64-hosted/usr/include/alpha")
+        if not persistent:
+            old_owner.unlink()
+            new_owner.unlink()
+
+        records = (old_owner, new_owner, old_manifest, new_manifest)
+        before = {path: path.read_bytes() if path.exists() else None for path in records}
+
+        def unchanged():
+            assert {path: path.read_bytes() if path.exists() else None for path in records} == before
+            assert header.read_text() == "alpha hosted\n" and obsolete.is_file()
+            assert neighbor.stat().st_mtime_ns == neighbor_mtime
+
+        # Failed staging and an unrelated claimant cannot retire the old claims.
+        failure = source / "beta/fail-install"
+        failure.touch()
+        assert "Intentional install failure" in make("beta-freestanding-amd64", succeeds=False)
+        unchanged()
+        failure.unlink()
+        stranger = ownership / "stranger.txt"
+        stranger.write_text(str(header) + "\n")
+        assert "Install ownership conflict" in make("beta-freestanding-amd64", succeeds=False)
+        unchanged()
+        stranger.unlink()
+
+        assert "Transferred interface installation" in make("beta-freestanding-amd64")
+        assert header.read_text() == "beta hosted\n" and not obsolete.exists(), (
+            header.read_text(), obsolete.exists(), old_owner.read_text(), new_owner.read_text())
+        assert str(header) in new_owner.read_text()
+        for record in (old_owner, old_manifest):
+            assert str(header) not in record.read_text() and str(obsolete) not in record.read_text()
+            assert str(neighbor) in record.read_text()
+        assert neighbor.stat().st_mtime_ns == neighbor_mtime
+        header_mtime = header.stat().st_mtime_ns
+        make()
+        make("beta-freestanding-amd64")
+        assert header.stat().st_mtime_ns == header_mtime
+
+        # Adoption of child manifests after ownership loss must not resurrect
+        # the old provider's claims, and transfers remain idempotent.
+        shutil.rmtree(ownership)
+        make()
+        assert header.read_text() == "beta hosted\n"
+        beta_cmake.write_text(beta_cmake.read_text() + '\ninstall(FILES "files/beta header.h" '
+            'DESTINATION "${CMAKE_INSTALL_PREFIX}/usr/include" RENAME "alpha header.h")\n')
+        assert "Install ownership conflict" in make("beta-freestanding-amd64", succeeds=False)
+        assert neighbor.read_text() == "alpha header\n"
+        configure(TEST_BETA_INSTALL_TRANSFER_ROOTS="../outside-install")
+        assert "bounded install subtree" in make("beta-freestanding-amd64", succeeds=False)
+        assert header.read_text() == "beta hosted\n"
+
+print("Explicit install transfers preserve staging failures, ownership checks, stale cleanup, and manifest adoption.")
