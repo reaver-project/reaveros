@@ -6,19 +6,26 @@ include("${TEST_REPOSITORY}/cmake/target_functions.cmake")
 set(REAVEROS_SOURCE_DIR "${TEST_REPOSITORY}")
 set(REAVEROS_BINARY_DIR "${CMAKE_BINARY_DIR}")
 set(REAVEROS_CMAKE "${CMAKE_COMMAND}")
-set(REAVEROS_COMPONENT_ARCHITECTURES amd64)
-set(REAVEROS_COMPONENT_MODES freestanding)
-set(REAVEROS_COMPONENT_INSTALL_PATH [=[sysroots/${_architecture}-${_mode}]=])
-set(REAVEROS_COMPONENT_DEPENDS "")
-set(REAVEROS_COMPONENT_SKIP_MODE_NAME FALSE)
 set(_REAVEROS_CONFIGURE_HANDLED_BY_BUILD CONFIGURE_HANDLED_BY_BUILD TRUE)
 
 configure_file(native-toolchain.cmake
     "${CMAKE_BINARY_DIR}/install/toolchain/files/amd64-freestanding.cmake" COPYONLY)
 add_custom_target(toolchain-llvm-install)
-reaveros_add_component(alpha "")
+reaveros_add_component(
+    NAME alpha SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/alpha"
+    BINARY_ROOT "${CMAKE_CURRENT_BINARY_DIR}"
+    ARCHITECTURES amd64 MODES freestanding
+    INSTALL_PATH [=[sysroots/${_architecture}-${_mode}]=]
+)
+set(_beta_dependencies "")
 if (TEST_BETA_DEPENDS_ON_ALPHA)
-    set(REAVEROS_COMPONENT_DEPENDS alpha-freestanding-amd64)
+    set(_beta_dependencies alpha-freestanding-amd64)
 endif()
-reaveros_add_component(beta "")
+reaveros_add_component(
+    NAME beta SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/beta"
+    BINARY_ROOT "${CMAKE_CURRENT_BINARY_DIR}"
+    ARCHITECTURES amd64 MODES freestanding
+    INSTALL_PATH [=[sysroots/${_architecture}-${_mode}]=]
+    DEPENDS ${_beta_dependencies}
+)
 add_custom_target(components DEPENDS alpha-freestanding-amd64 beta-freestanding-amd64)

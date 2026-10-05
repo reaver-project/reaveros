@@ -1,3 +1,5 @@
+include("${CMAKE_CURRENT_LIST_DIR}/../toolchain/targets.cmake")
+
 function(_reaveros_add_target_maybe_tests _name)
     add_custom_target(${_name})
     if (REAVEROS_ENABLE_UNIT_TESTS)
@@ -82,45 +84,137 @@ function(reaveros_register_target _target)
     _reaveros_register_target_impl(${_target} "" "${ARGN}")
 endfunction()
 
-function(reaveros_add_component _directory _prefix)
-    message(STATUS "Adding component ${CMAKE_CURRENT_SOURCE_DIR}/${_directory}...")
+function(_reaveros_expand_component_value _output _input _architecture _mode _context)
+    set(_value "${_input}")
+    # Add supported placeholders here; substitute text without another CMake parse.
+    foreach (_placeholder IN ITEMS _architecture _mode)
+        string(REPLACE "\${${_placeholder}}" "${${_placeholder}}" _value "${_value}")
+    endforeach()
+    if (_value MATCHES "\\$\\{")
+        message(FATAL_ERROR
+            "${_context}: unknown or malformed metadata placeholder in '${_input}'.")
+    endif()
+    set(${_output} "${_value}" PARENT_SCOPE)
+endfunction()
 
-    if (NOT ${_prefix} STREQUAL "")
-        set(_prefix "${_prefix}-")
+# Internal registration contract. Scalar paths and names are quoted; coordinates,
+# tags, and dependencies are lists. Mode dependencies augment the common list.
+# Component-specific compiler requirements belong in the child's CMakeLists.
+function(reaveros_add_component)
+    set(_dependency_fields DEPENDS)
+    foreach (_mode IN LISTS _reaveros_modes)
+        string(TOUPPER "${_mode}" _mode_uppercase)
+        list(APPEND _dependency_fields "DEPENDS_${_mode_uppercase}")
+    endforeach()
+    set(_scalar_fields NAME SOURCE_DIR BINARY_ROOT PREFIX INSTALL_PATH SKIP_MODE_NAME)
+    cmake_parse_arguments(PARSE_ARGV 0 _component
+        "" "${_scalar_fields}" "ARCHITECTURES;MODES;TAGS;${_dependency_fields}")
+
+    set(_context "Component '${_component_NAME}' (${_component_SOURCE_DIR})")
+    if (_component_UNPARSED_ARGUMENTS)
+        message(FATAL_ERROR
+            "${_context}: unknown registration arguments: ${_component_UNPARSED_ARGUMENTS}")
+    endif()
+    foreach (_field NAME SOURCE_DIR BINARY_ROOT INSTALL_PATH ARCHITECTURES MODES)
+        if (NOT DEFINED _component_${_field} OR "${_component_${_field}}" STREQUAL "")
+            message(FATAL_ERROR "${_context}: missing ${_field}.")
+        endif()
+    endforeach()
+    foreach (_field IN LISTS _scalar_fields)
+        if (_field IN_LIST _component_KEYWORDS_MISSING_VALUES AND NOT _field STREQUAL "PREFIX")
+            message(FATAL_ERROR "${_context}: ${_field} requires a value.")
+        endif()
+        list(LENGTH _component_${_field} _length)
+        if (_length GREATER 1)
+            message(FATAL_ERROR "${_context}: ${_field} must be a scalar, not a list.")
+        endif()
+    endforeach()
+    if (NOT IS_DIRECTORY "${_component_SOURCE_DIR}"
+            OR NOT EXISTS "${_component_SOURCE_DIR}/CMakeLists.txt")
+        message(FATAL_ERROR "${_context}: SOURCE_DIR must contain a CMakeLists.txt.")
+    endif()
+    foreach (_field SOURCE_DIR BINARY_ROOT)
+        if (NOT IS_ABSOLUTE "${_component_${_field}}")
+            message(FATAL_ERROR "${_context}: ${_field} must be an absolute path.")
+        endif()
+    endforeach()
+    if (NOT DEFINED _component_SKIP_MODE_NAME)
+        set(_component_SKIP_MODE_NAME FALSE)
+    endif()
+    string(TOUPPER "${_component_SKIP_MODE_NAME}" _component_SKIP_MODE_NAME)
+    if (NOT _component_SKIP_MODE_NAME MATCHES "^(ON|OFF|TRUE|FALSE|YES|NO|Y|N|0|1)$")
+        message(FATAL_ERROR "${_context}: SKIP_MODE_NAME must be a boolean.")
     endif()
 
-    foreach (_architecture IN LISTS REAVEROS_COMPONENT_ARCHITECTURES)
-        foreach (_mode IN LISTS REAVEROS_COMPONENT_MODES)
-            if (${_mode} STREQUAL "tests" AND NOT REAVEROS_ENABLE_UNIT_TESTS)
+    foreach (_field ARCHITECTURES MODES)
+        string(TOLOWER "${_field}" _field_lowercase)
+        set(_allowed "${_reaveros_${_field_lowercase}}")
+        set(_seen "")
+        foreach (_value IN LISTS _component_${_field})
+            if (NOT _value IN_LIST _allowed)
+                message(FATAL_ERROR "${_context}: unsupported ${_field} value '${_value}'.")
+            endif()
+            if (_value IN_LIST _seen)
+                message(FATAL_ERROR "${_context}: duplicate ${_field} value '${_value}'.")
+            endif()
+            list(APPEND _seen "${_value}")
+        endforeach()
+    endforeach()
+    if (_component_SKIP_MODE_NAME)
+        set(_ordinary_modes "${_component_MODES}")
+        list(REMOVE_ITEM _ordinary_modes tests)
+        list(LENGTH _ordinary_modes _length)
+        if (_length GREATER 1)
+            message(FATAL_ERROR
+                "${_context}: SKIP_MODE_NAME would give multiple modes the same target name.")
+        endif()
+    endif()
+
+    message(STATUS "Adding component ${_component_SOURCE_DIR}...")
+    set(_target_stem "${_component_NAME}")
+    if (NOT "${_component_PREFIX}" STREQUAL "")
+        string(PREPEND _target_stem "${_component_PREFIX}-")
+    endif()
+
+    foreach (_architecture IN LISTS _component_ARCHITECTURES)
+        foreach (_mode IN LISTS _component_MODES)
+            if (NOT DEFINED _reaveros_${_architecture}_${_mode}_target)
+                message(FATAL_ERROR
+                    "${_context}: unsupported architecture/mode '${_architecture}/${_mode}'.")
+            endif()
+            if (_mode STREQUAL "tests" AND NOT REAVEROS_ENABLE_UNIT_TESTS)
                 continue()
             endif()
 
-            if (REAVEROS_COMPONENT_SKIP_MODE_NAME AND NOT _mode STREQUAL "tests")
-                set(_component_name ${_prefix}${_directory}-${_architecture})
+            # Native tests always include their mode, including kernel tests.
+            if (_component_SKIP_MODE_NAME AND NOT _mode STREQUAL "tests")
+                set(_component_name "${_target_stem}-${_architecture}")
             else()
-                set(_component_name ${_prefix}${_directory}-${_mode}-${_architecture})
+                set(_component_name "${_target_stem}-${_mode}-${_architecture}")
             endif()
-            if (DEFINED REAVEROS_COMPONENT_DEPENDS_HOSTED)
-                if ("${_mode}" STREQUAL "hosted")
-                    cmake_language(EVAL CODE "set(_depends ${REAVEROS_COMPONENT_DEPENDS_HOSTED})")
-                else()
-                    set(_depends "")
-                endif()
-            else()
-                cmake_language(EVAL CODE "set(_depends ${REAVEROS_COMPONENT_DEPENDS})")
+            if (TARGET "${_component_name}")
+                message(FATAL_ERROR "${_context}: target '${_component_name}' is already registered.")
             endif()
-            cmake_language(EVAL CODE "set(_install_path ${REAVEROS_COMPONENT_INSTALL_PATH})")
+            string(TOUPPER "${_mode}" _mode_uppercase)
+            set(_dependency_templates ${_component_DEPENDS} ${_component_DEPENDS_${_mode_uppercase}})
+            _reaveros_expand_component_value(_depends "${_dependency_templates}"
+                "${_architecture}" "${_mode}" "${_context}")
+            _reaveros_expand_component_value(_install_path "${_component_INSTALL_PATH}"
+                "${_architecture}" "${_mode}" "${_context}")
+            set(_project_prefix "${_component_BINARY_ROOT}/${_component_name}-prefix")
 
             ExternalProject_Add(${_component_name}
                 EXCLUDE_FROM_ALL TRUE
+                PREFIX "${_project_prefix}"
+                BINARY_DIR "${_project_prefix}/src/${_component_name}-build"
 
                 DOWNLOAD_COMMAND ""
-                SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/${_directory}
+                SOURCE_DIR "${_component_SOURCE_DIR}"
                 BUILD_ALWAYS 1
 
                 DEPENDS toolchain-llvm-install ${_depends}
 
-                INSTALL_DIR ${REAVEROS_BINARY_DIR}/install/${_install_path}
+                INSTALL_DIR "${REAVEROS_BINARY_DIR}/install/${_install_path}"
 
                 ${_REAVEROS_CONFIGURE_HANDLED_BY_BUILD}
 
@@ -131,17 +225,17 @@ function(reaveros_add_component _directory _prefix)
                     "-DREAVEROS_INSTALL_CMAKE=${REAVEROS_CMAKE}"
                     -P "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/install_component.cmake"
 
-                CMAKE_COMMAND ${REAVEROS_CMAKE}
+                CMAKE_COMMAND "${REAVEROS_CMAKE}"
                 CMAKE_ARGS
                     --no-warn-unused-cli
-                    -DCMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}
-                    -DCMAKE_C_COMPILER_LAUNCHER=${CMAKE_C_COMPILER_LAUNCHER}
-                    -DCMAKE_CXX_COMPILER_LAUNCHER=${CMAKE_CXX_COMPILER_LAUNCHER}
-                    -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
-                    -DCMAKE_TOOLCHAIN_FILE=${REAVEROS_BINARY_DIR}/install/toolchain/files/${_architecture}-${_mode}.cmake
-                    -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>
-                    -DREAVEROS_ARCH=${_architecture}
-                    -DREAVEROS_THORN=${REAVEROS_THORN}
+                    "-DCMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
+                    "-DCMAKE_C_COMPILER_LAUNCHER=${CMAKE_C_COMPILER_LAUNCHER}"
+                    "-DCMAKE_CXX_COMPILER_LAUNCHER=${CMAKE_CXX_COMPILER_LAUNCHER}"
+                    "-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
+                    "-DCMAKE_TOOLCHAIN_FILE=${REAVEROS_BINARY_DIR}/install/toolchain/files/${_architecture}-${_mode}.cmake"
+                    "-DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>"
+                    "-DREAVEROS_ARCH=${_architecture}"
+                    "-DREAVEROS_THORN=${REAVEROS_THORN}"
             )
 
             # Existing child manifests let the ownership check adopt a build
@@ -156,7 +250,7 @@ function(reaveros_add_component _directory _prefix)
                 CONTENT "${BINARY_DIR}\n${STAMP_DIR}\n${TMP_DIR}\n"
             )
 
-            if (${_mode} STREQUAL "tests")
+            if (_mode STREQUAL "tests")
                 set_target_properties("${_component_name}"
                     PROPERTIES
                         _REAVEROS_IS_TEST_TARGET TRUE
@@ -168,28 +262,43 @@ function(reaveros_add_component _directory _prefix)
                 )
             endif()
 
-            reaveros_register_target(${_component_name} ${_architecture} ${_mode} ${ARGN} ${_directory})
+            reaveros_register_target(${_component_name} ${_architecture} ${_mode}
+                ${_component_TAGS} ${_component_NAME})
 
-            if (${_mode} STREQUAL "tests")
-                reaveros_register_target(${_component_name} ${_architecture} ${_mode} ${ARGN} ${_directory} build-tests)
+            if (_mode STREQUAL "tests")
+                reaveros_register_target(${_component_name} ${_architecture} ${_mode}
+                    ${_component_TAGS} ${_component_NAME} build-tests)
 
                 set_property(GLOBAL APPEND PROPERTY _REAVEROS_COMPONENTS "${_component_name}")
-                if (NOT _directory STREQUAL "kernel")
-                    set(_labels "${_architecture};${ARGN};${_prefix}${_directory}")
+                if (NOT _component_NAME STREQUAL "kernel")
+                    set(_labels "${_architecture};${_component_TAGS};${_target_stem}")
                 else()
-                    set(_labels "${_architecture};${ARGN}")
+                    set(_labels "${_architecture};${_component_TAGS}")
                 endif()
                 set_target_properties("${_component_name}"
                     PROPERTIES
                         _REAVEROS_COMPONENT_LABELS "${_labels}"
-                        _REAVEROS_COMPONENT_TEST_NAME "${_prefix}${_directory}-${_architecture}"
+                        _REAVEROS_COMPONENT_TEST_NAME "${_target_stem}-${_architecture}"
                 )
             endif()
         endforeach()
     endforeach()
 endfunction()
 
-function(reaveros_include_component _directory _prefix)
+# Keep component.cmake as the declaration format. Optional dependency fields are
+# empty by default and cannot inherit values from another component or the caller.
+function(reaveros_include_component _directory)
+    cmake_parse_arguments(PARSE_ARGV 1 _registration "" "PREFIX;BINARY_ROOT" "TAGS")
+    set(_missing_values "${_registration_KEYWORDS_MISSING_VALUES}")
+    list(REMOVE_ITEM _missing_values PREFIX TAGS)
+    if (_registration_UNPARSED_ARGUMENTS OR _missing_values)
+        message(FATAL_ERROR
+            "Component '${_directory}': invalid inclusion arguments: ${_registration_UNPARSED_ARGUMENTS} ${_missing_values}")
+    endif()
+    if (NOT DEFINED _registration_BINARY_ROOT)
+        set(_registration_BINARY_ROOT "${CMAKE_CURRENT_BINARY_DIR}")
+    endif()
+
     set(_component_vars
         REAVEROS_COMPONENT_ARCHITECTURES
         REAVEROS_COMPONENT_INSTALL_PATH
@@ -197,37 +306,57 @@ function(reaveros_include_component _directory _prefix)
         REAVEROS_COMPONENT_SKIP_MODE_NAME
         REAVEROS_COMPONENT_DEPENDS
     )
-    foreach (_variable IN LISTS _component_vars)
-        unset(${_variable})
+    foreach (_mode IN LISTS _reaveros_modes)
+        string(TOUPPER "${_mode}" _mode_uppercase)
+        list(APPEND _component_vars "REAVEROS_COMPONENT_DEPENDS_${_mode_uppercase}")
     endforeach()
-    unset(REAVEROS_COMPONENT_DEPENDS_HOSTED)
-
-    include(${_directory}/component.cmake)
-
-    if (NOT DEFINED REAVEROS_COMPONENT_SKIP_MODE_NAME)
-        set(REAVEROS_COMPONENT_SKIP_MODE_NAME FALSE)
-    endif()
-
     foreach (_variable IN LISTS _component_vars)
-        if (NOT DEFINED ${_variable})
-            if ("${_variable}" STREQUAL "REAVEROS_COMPONENT_DEPENDS" AND DEFINED REAVEROS_COMPONENT_DEPENDS_HOSTED)
-                continue()
-            endif()
-            message(FATAL_ERROR "Variable ${_variable} not defined for component ${CMAKE_CURRENT_SOURCE_DIR}/${_directory}!")
+        set(${_variable} "")
+    endforeach()
+    set(REAVEROS_COMPONENT_SKIP_MODE_NAME FALSE)
+
+    include("${_directory}/component.cmake")
+
+    get_cmake_property(_metadata_variables VARIABLES)
+    list(FILTER _metadata_variables INCLUDE REGEX "^REAVEROS_COMPONENT_")
+    foreach (_variable IN LISTS _metadata_variables)
+        if (NOT _variable IN_LIST _component_vars)
+            message(FATAL_ERROR
+                "Component '${_directory}' (${CMAKE_CURRENT_SOURCE_DIR}/${_directory}): unknown metadata field '${_variable}'.")
         endif()
     endforeach()
 
-    reaveros_add_component(${_directory} "${_prefix}" ${ARGN})
+    set(_mode_dependencies "")
+    foreach (_mode IN LISTS _reaveros_modes)
+        string(TOUPPER "${_mode}" _mode_uppercase)
+        list(APPEND _mode_dependencies "DEPENDS_${_mode_uppercase}"
+            ${REAVEROS_COMPONENT_DEPENDS_${_mode_uppercase}})
+    endforeach()
+    reaveros_add_component(
+        NAME "${_directory}"
+        SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/${_directory}"
+        BINARY_ROOT "${_registration_BINARY_ROOT}"
+        PREFIX "${_registration_PREFIX}"
+        TAGS ${_registration_TAGS}
+        ARCHITECTURES ${REAVEROS_COMPONENT_ARCHITECTURES}
+        MODES ${REAVEROS_COMPONENT_MODES}
+        INSTALL_PATH "${REAVEROS_COMPONENT_INSTALL_PATH}"
+        SKIP_MODE_NAME "${REAVEROS_COMPONENT_SKIP_MODE_NAME}"
+        DEPENDS ${REAVEROS_COMPONENT_DEPENDS}
+        ${_mode_dependencies}
+    )
 endfunction()
 
 function(reaveros_automatic_components _prefix)
-    file(GLOB _directories RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} CONFIGURE_DEPENDS *)
+    # Userspace discovery is intentional; libraries/services use explicit lists
+    # and loaders iterate only the user's selected loader names.
+    file(GLOB _directories RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}" CONFIGURE_DEPENDS *)
 
     foreach (_directory IN LISTS _directories)
-        if (IS_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/${_directory}
-                AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${_directory}/component.cmake
+        if (IS_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/${_directory}"
+                AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${_directory}/component.cmake"
         )
-            reaveros_include_component(${_directory} "${_prefix}" ${ARGN})
+            reaveros_include_component("${_directory}" PREFIX "${_prefix}" TAGS ${ARGN})
         endif()
     endforeach()
 endfunction()

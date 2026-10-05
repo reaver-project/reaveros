@@ -33,6 +33,13 @@ expect_no_target()
 }
 
 configure_selection -DREAVEROS_LOADERS=uefi
+expect_target kernel-amd64
+expect_no_target kernel-freestanding-amd64
+expect_no_target loader-uefi-uefi-amd64
+for mode in freestanding hosted uefi
+do
+    expect_target "library-rosestd-${mode}-amd64"
+done
 if ! grep --fixed-strings --line-regexp --quiet \
     'REAVEROS_ENABLE_UNIT_TESTS:BOOL=OFF' "${test_directory}/build/CMakeCache.txt"
 then
@@ -61,6 +68,7 @@ expect_target image-uefi-efipart-amd64
 configure_selection -DREAVEROS_ENABLE_UNIT_TESTS=ON
 expect_target kernel-tests-amd64
 expect_target library-rosestd-tests-amd64
+expect_target library-boot-protocol-tests-amd64
 configure_selection -DREAVEROS_ENABLE_UNIT_TESTS=OFF
 expect_no_target kernel-tests-amd64
 expect_no_target library-rosestd-tests-amd64

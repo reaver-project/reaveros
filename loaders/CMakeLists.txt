@@ -5,5 +5,5 @@ if ("uefi" IN_LIST REAVEROS_LOADERS)
 endif()
 
 foreach (loader IN LISTS REAVEROS_LOADERS)
-    reaveros_include_component(${loader} loader loaders)
+    reaveros_include_component("${loader}" PREFIX loader TAGS loaders)
 endforeach()

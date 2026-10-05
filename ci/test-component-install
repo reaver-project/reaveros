@@ -59,6 +59,30 @@ with tempfile.TemporaryDirectory() as temporary:
         assert (hosted / "usr/include" / name / "hosted.h").is_file()
     assert str(hosted / "usr/include/alpha/hosted.h") in alpha_owner.read_text()
 
+    # The catalogs support the cold reset performed by dependency CI.
+    project = "alpha-freestanding-amd64"
+    catalog_root = build / "cmake"
+    directories = [Path(line) for line in (
+        catalog_root / "component-build-directories" / (project + ".txt")
+    ).read_text().splitlines()]
+    assert len(directories) == 3
+    assert directories[0] == alpha_binary
+    manifest_record = catalog_root / "install-projects" / (project + ".txt")
+    assert manifest_record.read_text().splitlines() == [str(alpha_manifest)]
+    toolchain_file = build / "install/toolchain/files/amd64-freestanding.cmake"
+    toolchain_mtime = toolchain_file.stat().st_mtime_ns
+    beta_mtime = beta_header.stat().st_mtime_ns
+    for child_directory in directories:
+        assert child_directory.is_relative_to(build)
+        shutil.rmtree(child_directory)
+    run("cmake", "-S", str(source), "-B", str(build), "-G", "Unix Makefiles",
+        "-DTEST_REPOSITORY=" + str(repository))
+    build_components(project)
+    assert alpha_manifest.is_file()
+    assert os.access(sysroot / "usr/bin/alpha", os.X_OK)
+    assert beta_header.stat().st_mtime_ns == beta_mtime
+    assert toolchain_file.stat().st_mtime_ns == toolchain_mtime
+
     # An unchanged install keeps artifact timestamps and symlinks intact.
     installed = [path for path in sysroot.rglob("*") if path.is_file()]
     timestamps = {path: path.lstat().st_mtime_ns for path in installed}

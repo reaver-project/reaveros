@@ -77,10 +77,10 @@ reaveros_add_aggregate_targets_with_modes(libraries)
 
 add_subdirectory(toolchain)
 
-set(_saved "${CMAKE_CURRENT_BINARY_DIR}")
-set(CMAKE_CURRENT_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/kernel")
-reaveros_include_component(kernel "" kernels)
-set(CMAKE_CURRENT_BINARY_DIR "${_saved}")
+reaveros_include_component(kernel
+    BINARY_ROOT "${CMAKE_CURRENT_BINARY_DIR}/kernel"
+    TAGS kernels
+)
 
 add_subdirectory(libraries)
 add_subdirectory(loaders)
