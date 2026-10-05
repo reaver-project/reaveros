@@ -22,7 +22,7 @@ jobs:
   unit-tests:
     name: Unit tests
     invoke: run-unit-tests
-    axes: [architecture]
+    axes: [architecture, configuration]
     phase: standalone
     runner_class: validation-medium
     build_environment: true
@@ -47,5 +47,5 @@ jobs:
 workflows:
   ci:
     # Each line is a submatrix: jobs selects job types, and tag lists are axes.
-    - {jobs: [build-dependencies, unit-tests], architecture: [amd64]}
+    - {jobs: [build-dependencies, unit-tests], architecture: [amd64], configuration: [debug, release]}
     - {jobs: [image, smoke], architecture: [amd64], loader: [uefi], layout: [efipart], configuration: [debug, release], firmware: [ovmf], machine: [q35]}

@@ -2,14 +2,15 @@
 
 set -euo pipefail
 
-if [[ $# -ne 2 ]]
+if [[ $# -lt 2 || $# -gt 3 ]]
 then
-    printf 'usage: %s <architecture> <build-environment image>\n' "$0" >&2
+    printf 'usage: %s <architecture> <build-environment image> [configuration]\n' "$0" >&2
     exit 2
 fi
 
 architecture=$1
 build_environment=$2
+configuration=${3:-}
 repo_root=$(git rev-parse --show-toplevel)
 
 case $(uname -m) in
@@ -30,9 +31,11 @@ docker run --rm \
     /usr/bin/env bash -c '
         set -euo pipefail
         architecture=$1
+        configuration=$2
         cd /build
         cmake /reaveros -DREAVEROS_ENABLE_UNIT_TESTS=ON \
-            -DREAVEROS_ARCHITECTURES="${architecture}"
+            -DREAVEROS_ARCHITECTURES="${architecture}" \
+            -DCMAKE_BUILD_TYPE="${configuration}"
         make "all-${architecture}-build-tests" -j"$(nproc)"
         ctest --output-on-failure -j"$(nproc)"
-    ' -- "${architecture}"
+    ' -- "${architecture}" "${configuration}"

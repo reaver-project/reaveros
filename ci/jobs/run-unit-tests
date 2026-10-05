@@ -9,4 +9,13 @@ then
 fi
 
 architecture=$(jq --exit-status --raw-output '.tags.architecture' <<< "$1")
-exec ./ci/run-unit-tests "${architecture}" "${BUILD_ENVIRONMENT_IMAGE}"
+configuration=$(jq --exit-status --raw-output '.tags.configuration' <<< "$1")
+case "${configuration}" in
+    debug) configuration=Debug ;;
+    release) configuration=Release ;;
+    *)
+        printf 'Unsupported unit-test configuration: %s.\n' "${configuration}" >&2
+        exit 2
+        ;;
+esac
+exec ./ci/run-unit-tests "${architecture}" "${BUILD_ENVIRONMENT_IMAGE}" "${configuration}"

@@ -39,4 +39,17 @@ then
     exit 1
 fi
 
+job='{"invoke":"run-unit-tests","tags":{"architecture":"amd64","configuration":"other"}}'
+if invalid_output=$(BUILD_ENVIRONMENT_IMAGE=example.invalid/build-env MATRIX_JOB="${job}" \
+    ./ci/aws/run-matrix-job 2>&1)
+then
+    printf 'Unit tests accepted an unsupported configuration.\n' >&2
+    exit 1
+fi
+if [[ ${invalid_output} != *'Unsupported unit-test configuration'* ]]
+then
+    printf 'Unit tests failed before validating their configuration.\n' >&2
+    exit 1
+fi
+
 printf 'Matrix job dispatch tests passed.\n'

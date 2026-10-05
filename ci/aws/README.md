@@ -90,9 +90,10 @@ be rebuilt. One medium or large AWS builder then prepares the image. Once it is
 ready, build-dependency checks, unit tests, image construction, and the boot
 smoke test remain separate jobs with independent reporting.
 
-The image and smoke jobs carry the `configuration` axis from `ci/matrix.yaml`.
-CI builds both `debug` and `release` images with explicit CMake `Debug` and
-`Release` build types. Each smoke job consumes the artifact from its matching
+The unit-test, image, and smoke jobs carry the `configuration` axis from
+`ci/matrix.yaml`. CI tests and builds both `debug` and `release` with explicit
+CMake `Debug` and `Release` build types. Assertions remain enabled in Release
+test executables. Each smoke job consumes the image artifact from its matching
 configuration, so optimized startup is checked alongside debug startup.
 
 Per-run image tags are written to staging repositories and expire after three

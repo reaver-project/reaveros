@@ -20,6 +20,13 @@ class MatrixCompilerTests(unittest.TestCase):
             [group["name"] for group in independent],
             ["Check build-system dependencies", "Unit tests"],
         )
+        self.assertEqual(len(independent[0]["job_matrix"]["include"]), 1)
+        unit_tests = independent[1]["job_matrix"]["include"]
+        self.assertEqual(len(unit_tests), 2)
+        self.assertEqual(
+            {job["tags"]["configuration"] for job in unit_tests},
+            {"debug", "release"},
+        )
         images = result["producer"]["include"][0]["job_matrix"]["include"]
         smokes = result["consumer"]["include"][0]["job_matrix"]["include"]
         self.assertEqual(len(images), 2)
