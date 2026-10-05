@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $# != 1 ]]
+then
+    printf 'usage: %s <output image> (run from the staged initrd directory)\n' "$0" >&2
+    exit 2
+fi
+
+image=$1
+temporary=${image}.tmp
+trap 'rm -f -- "${temporary}"' EXIT
+
+# Retain find traversal and cpio metadata. Null delimiters only change filename
+# transport; reproducible ordering/ownership/timestamps are a separate policy.
+find . -print0 | cpio --null --no-absolute-filenames --format=newc --create > "${temporary}"
+mv -f -- "${temporary}" "${image}"
