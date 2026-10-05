@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+
+
+repository = Path(__file__).resolve().parent.parent
+fixture = repository / "ci/fixtures/component-registration"
+
+
+def run(*command, succeeds=True):
+    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    if (result.returncode == 0) != succeeds:
+        raise RuntimeError(result.stdout)
+    if "jobserver unavailable" in result.stdout:
+        raise AssertionError(result.stdout)
+    return result.stdout
+
+
+def report(build):
+    result = {}
+    for line in (build / "registration.txt").read_text().splitlines():
+        target, prop, value = line.split("\t", 2)
+        result.setdefault(target, {})[prop] = [] if value.endswith("-NOTFOUND") else value.split(";")
+    return result
+
+
+with tempfile.TemporaryDirectory() as temporary:
+    directory = Path(temporary)
+    source = directory / "source with spaces"
+    shutil.copytree(fixture, source)
+    for name in ("alpha", "beta"):
+        shutil.copyfile(fixture / "component/CMakeLists.txt", source / name / "CMakeLists.txt")
+
+    def configure(build, case="", tests=True, succeeds=True):
+        return run("cmake", "-S", str(source), "-B", str(build), "-G", "Unix Makefiles",
+            "-DTEST_REPOSITORY=" + str(repository), "-DTEST_CASE=" + case,
+            "-DREAVEROS_ENABLE_UNIT_TESTS=" + ("ON" if tests else "OFF"), succeeds=succeeds)
+
+    build = directory / "build with spaces"
+    configure(build)
+    contract = report(build)
+    modes = ("freestanding", "hosted", "uefi", "tests")
+    for mode in modes:
+        alpha = "library-alpha-" + mode + "-amd64"
+        beta = "library-beta-" + mode + "-amd64"
+        assert set(contract[alpha]["MANUALLY_ADDED_DEPENDENCIES"]) == {
+            "toolchain-llvm-install", "common-amd64", mode + "-first-amd64", mode + "-second-amd64"}
+        assert set(contract[beta]["MANUALLY_ADDED_DEPENDENCIES"]) == {
+            "toolchain-llvm-install", "common-amd64"}
+        assert set(contract["all-amd64-" + mode + "-libraries"]["MANUALLY_ADDED_DEPENDENCIES"]) == {
+            alpha, beta}
+        run("make", "-C", str(build), "-j4", alpha)
+        install = build / ("install/sysroots/amd64-" + mode) / "layout with spaces/usr/include/alpha.txt"
+        assert install.read_text() == mode + "\n"
+    assert set(contract["all-amd64-libraries"]["MANUALLY_ADDED_DEPENDENCIES"]) == {
+        "library-" + name + "-" + mode + "-amd64"
+        for name in ("alpha", "beta") for mode in modes if mode != "tests"}
+    for name in ("alpha", "beta"):
+        target = "library-" + name + "-tests-amd64"
+        assert contract[target]["_REAVEROS_COMPONENT_LABELS"] == ["amd64", "libraries", "library-" + name]
+        assert contract[target]["_REAVEROS_COMPONENT_TEST_NAME"] == ["library-" + name + "-amd64"]
+
+    configure(build)
+    assert report(build) == contract
+    configure(build, tests=False)
+    assert "library-alpha-tests-amd64" not in report(build)
+    configure(build)
+    assert report(build) == contract
+
+    skip_build = directory / "skip-mode"
+    configure(skip_build, case="skip-mode")
+    assert "library-alpha-amd64" in report(skip_build)
+    assert "library-alpha-tests-amd64" in report(skip_build)
+    assert "library-alpha-hosted-amd64" not in report(skip_build)
+
+    cases = {
+        "missing-name": "missing NAME",
+        "missing-source": "missing SOURCE_DIR",
+        "missing-root": "missing BINARY_ROOT",
+        "missing-install": "missing INSTALL_PATH",
+        "missing-architectures": "missing ARCHITECTURES",
+        "missing-modes": "missing MODES",
+        "unknown": "unknown registration arguments",
+        "architecture": "unsupported ARCHITECTURES",
+        "mode": "unsupported MODES",
+        "duplicate-architecture": "duplicate ARCHITECTURES",
+        "duplicate-mode": "duplicate MODES",
+        "coordinate": "unsupported architecture/mode",
+        "scalar-list": "SOURCE_DIR must be a scalar",
+        "relative-root": "BINARY_ROOT must be an absolute path",
+        "nonexistent-source": "SOURCE_DIR must contain a CMakeLists.txt",
+        "boolean": "SKIP_MODE_NAME must be a boolean",
+        "name-collision": "same target name",
+        "placeholder": "unknown or malformed metadata placeholder",
+        "dependency-placeholder": "unknown or malformed metadata placeholder",
+        "duplicate-target": "already registered",
+        "wrapper-unknown": "invalid inclusion arguments",
+        "wrapper-missing-value": "invalid inclusion arguments",
+    }
+    for case, diagnostic in cases.items():
+        output = configure(directory / case, case=case, succeeds=False)
+        assert diagnostic in " ".join(output.split()) and "Component '" in output, output
+
+    beta_metadata = source / "beta/component.cmake"
+    beta_original = beta_metadata.read_text()
+    beta_metadata.write_text("\n".join(beta_original.splitlines()[1:]) + "\n")
+    output = configure(directory / "missing-metadata", case="metadata", succeeds=False)
+    assert "missing ARCHITECTURES" in " ".join(output.split()) and "Component 'beta'" in output, output
+    beta_metadata.write_text(beta_original)
+
+    metadata = source / "alpha/component.cmake"
+    metadata.write_text(metadata.read_text() + "\nset(REAVEROS_COMPONENT_DEPENDS_HOTSED typo)\n")
+    output = configure(directory / "unknown-metadata", case="metadata", succeeds=False)
+    assert "unknown metadata field 'REAVEROS_COMPONENT_DEPENDS_HOTSED'" in " ".join(output.split()), output
+
+print("Component registration preserves mode dependencies, names, aggregates, paths, and diagnostics.")
