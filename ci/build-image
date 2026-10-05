@@ -44,5 +44,6 @@ docker run --rm \
             -DCMAKE_BUILD_TYPE="${configuration}"
         make "image-${image}" -j"$(nproc)"
         python3 /reaveros/ci/test-images /build/install/toolchain
+        python3 /reaveros/ci/test-image-reproducibility /build/install/toolchain
         cp "install/images/${image}.img" /artifacts/
     ' -- "${architecture}" "${loader}" "${image}" "${configuration}"

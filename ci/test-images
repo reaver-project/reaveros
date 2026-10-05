@@ -18,7 +18,7 @@ real_tools = {}
 if real:
     toolchain = Path(sys.argv[1]).resolve()
     real_tools = {name: str(toolchain / relative) for name, relative in (
-        ("mkfs.fat", "dosfstools/sbin/mkfs.fat"), ("mcopy", "mtools/bin/mcopy"))}
+        ("mkfs.fat", "dosfstools/sbin/mkfs.fat"), ("mcopy", "mtools/bin/mcopy"), ("mmd", "mtools/bin/mmd"))}
     for name in ("find", "cpio", "fallocate"):
         real_tools[name] = shutil.which(name)
     if not all(path and os.access(path, os.X_OK) for path in real_tools.values()):
@@ -68,9 +68,9 @@ with tempfile.TemporaryDirectory(prefix="image rules with spaces ") as temporary
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes((name + " fixture\n").encode())
         installed[name] = path
-    for name, relative in (("mkfs.fat", "dosfstools/sbin"), ("mcopy", "mtools/bin")):
+    for name, relative in (("mkfs.fat", "dosfstools/sbin"), ("mcopy", "mtools/bin"), ("mmd", "mtools/bin")):
         path = build / "install/toolchain" / relative / name
-        path.parent.mkdir(parents=True)
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.symlink_to(fixture / "tool-proxy.py")
     log = root / "tool calls.jsonl"
     env = dict(os.environ, PATH=str(bin_directory) + os.pathsep + os.environ["PATH"],
@@ -87,7 +87,7 @@ with tempfile.TemporaryDirectory(prefix="image rules with spaces ") as temporary
         return [call for line in log.read_text().splitlines()
             if (call := json.loads(line))[0] == name]
 
-    def inspect(initrd_same_bytes=True):
+    def inspect():
         assert fat.stat().st_size == 1474560
         if not real:
             names = json.loads(initrd.read_bytes())
@@ -108,20 +108,16 @@ with tempfile.TemporaryDirectory(prefix="image rules with spaces ") as temporary
             destination = root / "copied from FAT"
             destination.unlink(missing_ok=True)
             run(real_tools["mcopy"], "-i", fat.name, "::/" + relative, str(destination), cwd=fat.parent)
-            if relative == "reaver/initrd.img" and not initrd_same_bytes:
-                # A subsequently requested standalone initrd changes archive
-                # metadata, without changing the payload already packed in FAT.
-                inspect_archive(destination.read_bytes(), root / "FAT archive")
-            else:
-                assert destination.read_bytes() == original.read_bytes(), relative
+            assert destination.read_bytes() == original.read_bytes(), relative
         run(str(toolchain / "dosfstools/sbin/fsck.fat"), "-n", str(fat))
 
     output = make()
     assert output.count("Staging fixture services") == 1, output
     assert output.count("Packaging initrd for amd64") == 1, output
     assert output.count("Packaging UEFI filesystem for amd64") == 1, output
-    assert len(calls("cpio")) == len(calls("mkfs.fat")) == len(calls("mcopy")) == 1
-    assert calls("mcopy")[0][-3:] == ["EFI", "reaver", "::/"]
+    assert len(calls("cpio")) == len(calls("mkfs.fat")) == len(calls("mmd")) == 1
+    assert [call[-2:] for call in calls("mcopy")] == [[name, "::/" + name] for name in (
+        "EFI/BOOT/BOOTX64.EFI", "EFI/BOOT/reaveros.conf", "reaver/kernel.img", "reaver/initrd.img")]
     inspect()
 
     # CMake's top-level Makefile can traverse a separate recursive dependency
@@ -130,10 +126,10 @@ with tempfile.TemporaryDirectory(prefix="image rules with spaces ") as temporary
             ("image-uefi-efipart-amd64", "image-initrd-amd64")):
         log.write_text("")
         run("make", "-C", str(build), "-j8", *goals, env=env)
-        assert len(calls("mkfs.fat")) == len(calls("mcopy")) == 1
+        assert len(calls("mkfs.fat")) == 1 and len(calls("mcopy")) == 4
         print("Direct image goals: " + ", ".join(goals) +
             "; initrd packaging runs: " + str(len(calls("cpio"))))
-        inspect(initrd_same_bytes=goals[0] == "image-initrd-amd64")
+        inspect()
 
     # Every request runs packaging, including unchanged inputs and reconfigure.
     for reconfigure in (False, True):
@@ -159,7 +155,7 @@ with tempfile.TemporaryDirectory(prefix="image rules with spaces ") as temporary
 
     # Check both sides of the pipeline and each FAT tool. Failed attempts must
     # neither publish partial images nor reach later tools; retries must recover.
-    for failed in ("find", "cpio", "fallocate", "mkfs.fat", "mcopy"):
+    for failed in ("find", "cpio", "fallocate", "mkfs.fat", "mmd", "mcopy"):
         previous = fat.read_bytes() if failed not in ("find", "cpio") else initrd.read_bytes()
         image = fat if failed not in ("find", "cpio") else initrd
         assert "Intentional image tool failure" in make(failure=failed, succeeds=False)
@@ -167,7 +163,7 @@ with tempfile.TemporaryDirectory(prefix="image rules with spaces ") as temporary
         if failed in ("find", "cpio"):
             assert not Path(str(initrd) + ".tmp").exists()
             assert not calls("mkfs.fat")
-        if failed in ("fallocate", "mkfs.fat"):
+        if failed in ("fallocate", "mkfs.fat", "mmd"):
             assert not calls("mcopy")
         make()
 

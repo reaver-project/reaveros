@@ -46,9 +46,11 @@ elif tool == "mkfs.fat":
         boot = bytearray(512)
         struct.pack_into("<HBHBHH", boot, 11, 512, 1, 1, 2, 224, 2880)
         struct.pack_into("<H", boot, 22, 9)
+        if "-i" in sys.argv:
+            struct.pack_into("<I", boot, 39, int(sys.argv[sys.argv.index("-i") + 1], 16))
         boot[510:512] = b"\x55\xaa"
         image.write(boot)
-elif tool == "mcopy":
+elif tool in ("mcopy", "mmd"):
     pass
 else:
     raise AssertionError(tool)
