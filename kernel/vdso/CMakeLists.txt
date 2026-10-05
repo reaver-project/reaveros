@@ -44,15 +44,6 @@ add_custom_target(thorn-generation
         ${_thorn_kernel_files}
 )
 
-set_source_files_properties(
-    FILES
-        ${_thorn_user_files}
-        ${_thorn_vdso_files}
-        ${_thorn_kernel_files}
-    PROPERTIES
-        GENERATED TRUE
-)
-
 add_library(vdso SHARED
     ${_thorn_vdso_files}
 )
@@ -92,6 +83,8 @@ add_custom_target(vdso_symbols DEPENDS ${vdso_symbols_file})
 add_custom_target(interface-artifacts ALL DEPENDS thorn-generation vdso_symbols)
 install(FILES "${vdso_symbols_file}" DESTINATION .)
 
+# Retained for future vDSO-base-relative consumers; none currently installs or
+# consumes this optional offsets artifact.
 set(vdso_offsets_file "${CMAKE_CURRENT_BINARY_DIR}/vdso_offsets.lds")
 
 add_custom_command(OUTPUT ${vdso_offsets_file}

@@ -19,7 +19,7 @@ file(GLOB toolchain_files
 
 foreach (toolchain_file_in IN LISTS toolchain_files)
     string(REGEX
-        REPLACE ".in$" ""
+        REPLACE "\\.in$" ""
         toolchain_file
         ${toolchain_file_in}
     )
