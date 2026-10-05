@@ -12,6 +12,7 @@ foreach (file IN LISTS test_files)
     string(REGEX REPLACE ".test.cpp$" "" test_name ${file})
 
     add_executable(${exe_name} "${file}")
+    target_compile_options(${exe_name} PRIVATE -UNDEBUG)
     target_link_libraries(${exe_name} rosestd)
     add_dependencies(build-tests ${exe_name})
 

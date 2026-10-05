@@ -40,11 +40,23 @@ fi
 
 for required_argument in \
     '-DREAVEROS_ARCHITECTURES="${architecture}"' \
-    '-DREAVEROS_LOADERS="${loader}"'
+    '-DREAVEROS_LOADERS="${loader}"' \
+    '-DCMAKE_BUILD_TYPE="${configuration}"'
 do
     if ! grep --fixed-strings --quiet -- "${required_argument}" "${BUILD_IMAGE_TEST_LOG}"
     then
         printf 'The image build did not configure %s.\n' "${required_argument}" >&2
+        exit 1
+    fi
+done
+
+for configuration in Debug Release
+do
+    "${self_dir}/build-image" amd64 uefi efipart \
+        example.invalid/reaveros-build-env:test "${artifact_directory}" "${configuration}"
+    if [[ $(tail -n1 "${BUILD_IMAGE_TEST_LOG}") != "${configuration}" ]]
+    then
+        printf 'The image build did not forward the %s configuration.\n' "${configuration}" >&2
         exit 1
     fi
 done

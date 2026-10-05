@@ -37,12 +37,13 @@
 #include <cstdint>
 
 using ctor_t = void (*)();
-extern "C" ctor_t __start_ctors;
-extern "C" ctor_t __end_ctors;
+// Linker boundaries may coincide when the constructor array is empty.
+extern "C" ctor_t __start_ctors[];
+extern "C" ctor_t __end_ctors[];
 
 extern "C" void __init()
 {
-    for (auto ctor = &__start_ctors; ctor != &__end_ctors; ++ctor)
+    for (auto ctor = __start_ctors; ctor != __end_ctors; ++ctor)
     {
         (*ctor)();
     }
