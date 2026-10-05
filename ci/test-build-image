@@ -70,6 +70,7 @@ done
 "${repo_root}/ci/test-cache-launcher"
 "${self_dir}/test-build-selection"
 "${self_dir}/test-component-registration"
+"${self_dir}/test-native-tests"
 "${self_dir}/test-component-install"
 "${self_dir}/test-install-transfer"
 "${self_dir}/test-build-dependencies"
