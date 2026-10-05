@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tarfile
+import tempfile
+import time
+
+
+repository = Path(__file__).resolve().parent.parent
+fixture = repository / "ci/fixtures/toolchain-lifecycle"
+
+
+def run(*command, expected=0):
+    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    assert result.returncode == expected, result.stdout
+    assert "jobserver unavailable" not in result.stdout, result.stdout
+    return result.stdout
+
+
+with tempfile.TemporaryDirectory(prefix="toolchain state with spaces ") as temporary:
+    root = Path(temporary)
+    package = root / "package"
+    shutil.copytree(fixture / "package", package)
+    archive = root / "package.tar"
+    with tarfile.open(archive, "w") as stream:
+        stream.add(package, arcname="package")
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    patch = root / "patch-input"
+    patch.write_text("patch version one\n")
+    build = root / "build"
+
+    def configure(value=1, jobs=2):
+        return run("cmake", "-S", str(fixture), "-B", str(build), "-G", "Unix Makefiles",
+            "-DTEST_REPOSITORY=" + str(repository), "-DTEST_ARCHIVE=" + str(archive),
+            "-DTEST_ARCHIVE_HASH=" + digest, "-DTEST_PATCH_INPUT=" + str(patch),
+            "-DTEST_VALUE=" + str(value), "-DTEST_JOBS=" + str(jobs))
+
+    def make(target="toolchain-example-install", expected=0):
+        return run("make", "-C", str(build), "-j4", target, expected=expected)
+
+    prefix = build / "toolchain/toolchain-example-prefix"
+    source = prefix / "src/toolchain-example"
+    binary = prefix / "src/toolchain-example-build"
+    installed = build / "install/toolchain/example/bin/example"
+    state = build / "toolchain/toolchain-example-installed-state.json"
+    control = build / "control"
+    control.mkdir(parents=True)
+    configure()
+    # An empty cache cannot be pruned or acquire an installation record.
+    assert "refusing to prune incomplete" in make("toolchain-example-prune", expected=2)
+    assert not state.exists()
+    for phase in ("configure", "build", "install"):
+        marker = control / ("fail-" + phase)
+        marker.touch()
+        output = make(expected=2)
+        assert "Intentional " + phase + " failure" in output, output
+        assert not state.exists()
+        configure()
+        assert "Intentional " + phase + " failure" in make(expected=2)
+        marker.unlink()
+    make()
+    assert run(str(installed)).strip() == "1"
+    first = {path: path.stat().st_mtime_ns for path in (installed, state)}
+    assert "Performing " not in make()
+    configure()
+    assert "Performing " not in make()
+    assert first == {path: path.stat().st_mtime_ns for path in first}
+
+    # Input timestamp noise must not change the patch identity or installation.
+    os.utime(patch, None)
+    configure()
+    assert "Performing " not in make()
+    make("toolchain-example-prune")
+    assert not source.exists() and not binary.exists()
+    assert json.loads(state.read_text())["pruned"]
+    configure()
+    assert "Performing " not in make()
+    assert run(str(installed)).strip() == "1"
+    assert installed.stat().st_mtime_ns == first[installed]
+
+    # A scheduling-only change preserves a pruned installation.
+    assert json.loads(state.read_text())["pruned"], (state.read_text(), list(binary.iterdir()))
+    configure(jobs=8)
+    assert "Performing " not in make()
+    assert installed.stat().st_mtime_ns == first[installed]
+    configure(value=2, jobs=8)
+    assert "recovering changed installed inputs" in make()
+    assert run(str(installed)).strip() == "2"
+    assert not json.loads(state.read_text())["pruned"]
+    patch.write_text("patch version two\n")
+    configure(value=2, jobs=8)
+    assert "recovering changed installed inputs" in make()
+    assert run(str(installed)).strip() == "2"
+
+    # Missing output recovery handles both ordinary and pruned installations.
+    installed.unlink()
+    assert "recovering missing installed outputs" in make()
+    assert run(str(installed)).strip() == "2"
+    make("toolchain-example-prune")
+    installed.unlink()
+    assert "recovering missing installed outputs" in make()
+    assert run(str(installed)).strip() == "2"
+    state.unlink()
+    assert "adopted verified legacy installation" in make()
+    assert state.exists()
+
+    # A new source identity cannot inherit the old installed artifacts.
+    main = package / "main.c"
+    main.write_text(main.read_text().replace("TEST_VALUE);", "TEST_VALUE + 10);"))
+    with tarfile.open(archive, "w") as stream:
+        stream.add(package, arcname="package")
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    configure(value=2, jobs=8)
+    assert "recovering changed installed inputs" in make()
+    assert run(str(installed)).strip() == "12"
+
+    # A prior completion record cannot bless an interrupted install attempt.
+    contract = json.loads((build / "toolchain/toolchain-example-lifecycle.json").read_text())
+    Path(contract["stamps"]["install"]).unlink()
+    assert "refusing to prune incomplete" in make("toolchain-example-prune", expected=2)
+    assert source.exists() and binary.exists()
+    make()
+
+    # Conflicts in one invocation fail even when earlier requested targets
+    # finish: the project lease covers the entire Make invocation.
+    output = run("make", "-C", str(build), "-j4", "toolchain-example-install",
+        "toolchain-example-prune", expected=2)
+    assert "conflicting operation" in output, output
+    assert installed.exists()
+
+print("Toolchain contracts validate completion, legacy adoption, failures, pruned reuse, configuration/patch inputs, and missing outputs.")

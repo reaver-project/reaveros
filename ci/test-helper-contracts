@@ -1,0 +1,25 @@
+#!/usr/bin/env python3
+
+from pathlib import Path
+import subprocess
+import tempfile
+
+
+repository = Path(__file__).resolve().parent.parent
+cases = {
+    "aggregate": "Aggregates require one suffix",
+    "mode-aggregate": "Mode aggregates require one suffix",
+    "tags": "requires at least one registration tag",
+    "prune-source": "Invalid prune options",
+    "prune-output": "Invalid prune options",
+    "source": "Invalid source identity step",
+    "tag": "requires one revision",
+}
+with tempfile.TemporaryDirectory() as temporary:
+    for case, diagnostic in cases.items():
+        result = subprocess.run(["cmake", "-S", str(repository / "ci/fixtures/helper-contracts"),
+            "-B", str(Path(temporary) / case), "-G", "Unix Makefiles",
+            "-DTEST_REPOSITORY=" + str(repository), "-DTEST_CASE=" + case],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        assert result.returncode and diagnostic in " ".join(result.stdout.split()), result.stdout
+print("Invalid aggregate, registration, source, prune, and tag inputs fail contextually.")
