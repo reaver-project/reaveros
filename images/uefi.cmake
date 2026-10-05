@@ -3,8 +3,6 @@ function(_reaveros_add_uefi_image_target architecture)
     reaveros_require_host_python()
     set(_targetfs_contents "${REAVEROS_BINARY_DIR}/images/mount/uefi-efipart-${architecture}")
     set(_targetfs_path "${REAVEROS_BINARY_DIR}/install/images/uefi-efipart-${architecture}.img")
-    set(_temporary_path "${_targetfs_path}.tmp")
-    file(RELATIVE_PATH _temporary_relative "${_targetfs_contents}" "${_temporary_path}")
 
     # Preserve the existing floppy-sized FAT layout; these are internal geometry
     # constants, not configuration options. Validate usable capacity after mkfs.
@@ -33,17 +31,12 @@ function(_reaveros_add_uefi_image_target architecture)
             "${REAVEROS_BINARY_DIR}/install/images/initrd-${architecture}.img"
             "${_targetfs_contents}/reaver/initrd.img"
 
-        COMMAND "${CMAKE_COMMAND}" -E rm -f "${_temporary_path}"
-        COMMAND "${REAVEROS_HOST_FALLOCATE}" -l "${_image_size}" "${_temporary_path}"
-        COMMAND "${REAVEROS_BINARY_DIR}/install/toolchain/dosfstools/sbin/mkfs.fat" "${_temporary_path}"
-        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/check-fat-capacity"
-            "${_temporary_path}" "${_targetfs_contents}" "${_image_size}" "${_sector_size}"
-        # mtools expands the -i argument itself. Relative layout paths avoid
-        # interpreting quotes/dollars in the build root as expansion syntax.
-        COMMAND "${CMAKE_COMMAND}" -E chdir "${_targetfs_contents}"
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/create-uefi-image"
+            "${_targetfs_contents}" "${_targetfs_path}" "${_image_size}" "${_sector_size}"
+            "${REAVEROS_HOST_FALLOCATE}"
+            "${REAVEROS_BINARY_DIR}/install/toolchain/dosfstools/sbin/mkfs.fat"
+            "${REAVEROS_BINARY_DIR}/install/toolchain/mtools/bin/mmd"
             "${REAVEROS_BINARY_DIR}/install/toolchain/mtools/bin/mcopy"
-            -os -i "${_temporary_relative}" EFI reaver ::/
-        COMMAND "${CMAKE_COMMAND}" -E rename "${_temporary_path}" "${_targetfs_path}"
         BYPRODUCTS "${_targetfs_path}"
         WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
         COMMENT "Packaging UEFI filesystem for ${architecture}"

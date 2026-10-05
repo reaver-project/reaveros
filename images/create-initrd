@@ -1,20 +1,42 @@
-#!/usr/bin/env bash
+#!/usr/bin/env python3
 
-set -euo pipefail
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
 
-if [[ $# != 3 ]]
-then
-    printf 'usage: %s <output image> <find> <cpio> (run from the staged initrd directory)\n' "$0" >&2
-    exit 2
-fi
+from reproducibility import normalize_paths, packaging_environment
 
-image=$1
-find_executable=$2
-cpio_executable=$3
-temporary=${image}.tmp
-trap 'rm -f -- "${temporary}"' EXIT
 
-# Retain find traversal and cpio metadata. Null delimiters only change filename
-# transport; reproducible ordering/ownership/timestamps are a separate policy.
-"${find_executable}" . -print0 | "${cpio_executable}" --null --no-absolute-filenames --format=newc --create > "${temporary}"
-mv -f -- "${temporary}" "${image}"
+def main():
+    if len(sys.argv) != 7:
+        raise ValueError("usage: create-initrd <services> <runtime> <staging> <image> <find> <cpio>")
+    services, runtime, staging, image = map(Path, sys.argv[1:5])
+    find, cpio = sys.argv[5:]
+    env = packaging_environment()
+    temporary = Path(str(image) + ".tmp")
+    try:
+        if staging.exists():
+            shutil.rmtree(staging)
+        shutil.copytree(services, staging, symlinks=True)
+        shutil.copyfile(runtime, staging / "librosestd.so")
+        listed = subprocess.check_output([find, ".", "-print0"], cwd=staging, env=env)
+        if not listed.endswith(b"\0"):
+            raise ValueError("find did not produce a null-terminated pathname list")
+        names = sorted(listed[:-1].split(b"\0"))
+        normalize_paths(staging, [os.fsdecode(name) for name in names], int(env["SOURCE_DATE_EPOCH"]))
+        image.parent.mkdir(parents=True, exist_ok=True)
+        with temporary.open("wb") as output:
+            subprocess.run([cpio, "--null", "--no-absolute-filenames", "--format=newc", "--create",
+                "--reproducible", "--owner=0:0"], input=b"\0".join(names) + b"\0",
+                stdout=output, cwd=staging, env=env, check=True)
+        temporary.replace(image)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+try:
+    main()
+except (OSError, ValueError, subprocess.CalledProcessError) as error:
+    sys.exit("Initrd packaging: " + str(error))

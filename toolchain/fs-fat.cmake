@@ -56,7 +56,7 @@ ExternalProject_Add(toolchain-mtools
     BUILD_COMMAND $(MAKE)
     INSTALL_COMMAND $(MAKE) install
 )
-reaveros_add_ep_prune_target(toolchain-mtools REQUIRED_INSTALLED_OUTPUTS bin/mcopy bin/mformat)
+reaveros_add_ep_prune_target(toolchain-mtools REQUIRED_INSTALLED_OUTPUTS bin/mcopy bin/mformat bin/mmd)
 reaveros_add_ep_source_identity_step(toolchain-mtools ${REAVEROS_MTOOLS_SHA256}
     DEPENDEES download update patch)
 

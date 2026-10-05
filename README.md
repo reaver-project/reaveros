@@ -152,8 +152,21 @@ Image targets intentionally package on every request. Each owns its staging tree
 and declares its resulting image as a byproduct. Packaging replaces the completed
 image only on success. The UEFI FAT image retains its 1,474,560-byte layout; a
 preflight check accounts for formatted filesystem overhead and rounded allocations
-and rejects an oversized payload before copying it. Image ordering, timestamps,
-ownership, and FAT identity are not normalized for byte reproducibility.
+and rejects an oversized payload before copying it.
+
+Packaging identical installed payloads with the same intended executable modes,
+geometry, epoch, and packaging-tool versions produces identical image bytes.
+`SOURCE_DATE_EPOCH` selects the packaging time; its default is 315532800
+(1980-01-01 UTC), and the supported range is 315532800 through 4294967295.
+Packaging fixes the locale/timezone, sorts initrd paths, records root ownership,
+normalizes permissions and timestamps, and uses a fixed FAT allocation order and
+content-derived volume ID. FAT timestamps have two-second precision. Filesystem
+metadata normalization affects fresh staging trees, leaving installed artifacts
+and sources intact. Public image targets still package on every request.
+
+This is reproducibility of packaging already-built payloads. Fresh source builds
+can differ: Thorn intentionally randomizes syscall IDs, and compiler/debug paths
+and PE timestamps are other binary-level inputs. Thorn's randomization is retained.
 
 ### Running the OS (as far as it goes, at least)
 
