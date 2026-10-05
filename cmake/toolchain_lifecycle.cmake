@@ -1,5 +1,6 @@
 include_guard(GLOBAL)
 
+include("${CMAKE_CURRENT_LIST_DIR}/host_tools.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/external_project_make.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/toolchain_contracts.cmake")
 
@@ -49,7 +50,7 @@ function(reaveros_add_ep_prune_target external_project)
             set_property(DIRECTORY PROPERTY _REAVEROS_LIFECYCLE_SCHEDULED TRUE)
             cmake_language(DEFER CALL _reaveros_finalize_toolchain_lifecycles)
         endif()
-        find_package(Python3 3.9 REQUIRED COMPONENTS Interpreter)
+        reaveros_require_host_python()
         set(_commands COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../toolchain/installed-state"
             prune "${REAVEROS_BINARY_DIR}/toolchain/${external_project}-lifecycle.json")
     else()
@@ -71,6 +72,7 @@ function(reaveros_add_ep_prune_target external_project)
 endfunction()
 
 function(reaveros_add_ep_source_identity_step external_project identity)
+    reaveros_require_host_tools("Upstream source validation" bash)
     set_property(TARGET ${external_project} PROPERTY _REAVEROS_SOURCE_ID "${identity}")
     cmake_parse_arguments(PARSE_ARGV 2 source "" "" "DEPENDEES")
     if (source_UNPARSED_ARGUMENTS OR source_KEYWORDS_MISSING_VALUES OR NOT source_DEPENDEES)
@@ -93,7 +95,7 @@ function(reaveros_add_ep_source_identity_step external_project identity)
 
     ExternalProject_Add_Step(${external_project}
         invalidate-build
-        COMMAND bash "${REAVEROS_SOURCE_DIR}/toolchain/invalidate-stale-build"
+        COMMAND "${REAVEROS_HOST_BASH}" "${REAVEROS_SOURCE_DIR}/toolchain/invalidate-stale-build"
             "${REAVEROS_BINARY_DIR}" ${external_project}
             <BINARY_DIR> <INSTALL_DIR> "${identity}"
         DEPENDEES ${source_DEPENDEES}
@@ -106,6 +108,7 @@ function(reaveros_add_ep_fetch_tag_target external_project revision)
     if (NOT ARGC EQUAL 2 OR "${revision}" STREQUAL "")
         message(FATAL_ERROR "Git source selection for '${external_project}' requires one revision.")
     endif()
+    reaveros_require_host_tools("Upstream Git source selection" bash)
     ExternalProject_Get_Property(${external_project}
         STAMP_DIR GIT_REPOSITORY GIT_TAG UPDATE_DISCONNECTED)
 
@@ -123,7 +126,7 @@ function(reaveros_add_ep_fetch_tag_target external_project revision)
     ExternalProject_Add_Step(${external_project}
         set-to-tag
         COMMAND "${CMAKE_COMMAND}" -E env "GIT_EXECUTABLE=${GIT_EXECUTABLE}"
-            bash "${REAVEROS_SOURCE_DIR}/toolchain/ensure-git-tag"
+            "${REAVEROS_HOST_BASH}" "${REAVEROS_SOURCE_DIR}/toolchain/ensure-git-tag"
             <SOURCE_DIR> ${GIT_TAG} ${revision} ${GIT_REPOSITORY}
         DEPENDEES download
         DEPENDERS ${update_step} ${patch_step} configure build

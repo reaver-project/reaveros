@@ -1,0 +1,5 @@
+# Selected once by the superbuild; child symbol extraction uses these exact tools.
+set(REAVEROS_HOST_BASH [==[@REAVEROS_HOST_BASH@]==])
+set(REAVEROS_HOST_TAIL [==[@REAVEROS_HOST_TAIL@]==])
+set(REAVEROS_HOST_GREP [==[@REAVEROS_HOST_GREP@]==])
+set(REAVEROS_HOST_AWK [==[@REAVEROS_HOST_AWK@]==])

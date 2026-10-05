@@ -1,3 +1,13 @@
+reaveros_require_host_tools("dosfstools source configuration" aclocal autoconf automake m4)
+# autogen.sh invokes these tools by name. Give it a private directory containing
+# exactly the selected executables, also covering nested Autotools invocations.
+set(_autotools_path "${CMAKE_CURRENT_BINARY_DIR}/host-autotools")
+file(MAKE_DIRECTORY "${_autotools_path}")
+foreach (_tool aclocal autoconf automake m4)
+    string(TOUPPER "${_tool}" _name)
+    file(CREATE_LINK "${REAVEROS_HOST_${_name}}" "${_autotools_path}/${_tool}" SYMBOLIC)
+endforeach()
+
 ExternalProject_Add(toolchain-dosfstools
     GIT_REPOSITORY ${REAVEROS_DOSFSTOOLS_REPO}
     GIT_TAG ${REAVEROS_DOSFSTOOLS_TAG}
@@ -12,7 +22,9 @@ ExternalProject_Add(toolchain-dosfstools
 
     ${_REAVEROS_CONFIGURE_HANDLED_BY_BUILD}
 
-    CONFIGURE_COMMAND cd <SOURCE_DIR> && <SOURCE_DIR>/autogen.sh
+    CONFIGURE_COMMAND "${CMAKE_COMMAND}" -E chdir <SOURCE_DIR>
+        "${CMAKE_COMMAND}" -E env "PATH=${_autotools_path}:$ENV{PATH}"
+        <SOURCE_DIR>/autogen.sh
     COMMAND <SOURCE_DIR>/configure --prefix=<INSTALL_DIR>
         "CC=${CMAKE_C_COMPILER_LAUNCHER} ${CMAKE_C_COMPILER}"
         "CXX=${CMAKE_CXX_COMPILER_LAUNCHER} ${CMAKE_CXX_COMPILER}"

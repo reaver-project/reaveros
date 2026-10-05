@@ -52,12 +52,14 @@ with tempfile.TemporaryDirectory(prefix="image rules with spaces ") as temporary
     logger.write_bytes(b"first service\n")
     awkward = services / "a 'quoted' $service with\nnewline.srv"
     awkward.write_bytes(b"another service\n")
-    run("cmake", "-S", str(source), "-B", str(build), "-G", "Unix Makefiles",
-        "-DTEST_REPOSITORY=" + str(repository_link), "-DTEST_PAYLOAD=" + str(payload))
     bin_directory = root / "bin with spaces"
     bin_directory.mkdir()
     for name in ("find", "cpio", "fallocate"):
         (bin_directory / name).symlink_to(fixture / "tool-proxy.py")
+    run("cmake", "-S", str(source), "-B", str(build), "-G", "Unix Makefiles",
+        "-DTEST_REPOSITORY=" + str(repository_link), "-DTEST_PAYLOAD=" + str(payload),
+        *("-DREAVEROS_HOST_" + name.upper() + "=" + str(bin_directory / name)
+            for name in ("find", "cpio", "fallocate")))
     installed = {}
     for name, relative in (
         ("librosestd", "sysroots/amd64-hosted/usr/lib/librosestd.so"),

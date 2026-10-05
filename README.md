@@ -16,12 +16,16 @@ dependencies are (on a Linux host):
 * Git;
 * Bison;
 * Flex;
-* Bash, GNU find, cpio, and fallocate;
+* Bash, GNU find and cpio, awk, grep, tail, and fallocate;
+* Autoconf, Automake (including aclocal), and M4 for the UEFI filesystem tools;
 * OpenSSL;
 * C and C++ compilers;
 * GNU Make. The supported CMake generator is `Unix Makefiles`.
 
 Toolchain lifecycle guards also use Linux `/proc`, file locks, and pidfds.
+The superbuild checks required host tools while configuring the enabled features
+and passes their resolved paths to helpers and child projects. Autotools runs with
+private aliases for the selected executables so its nested commands use the same selection.
 
 On Debian Trixie, or another apt-based system providing CMake 3.31 or newer,
 the following command should fulfill the dependencies:

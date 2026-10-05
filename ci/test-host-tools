@@ -1,0 +1,60 @@
+#!/usr/bin/env python3
+
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+
+
+repository = Path(__file__).resolve().parent.parent
+cmake = shutil.which("cmake")
+make = shutil.which("make")
+tools = ("bash", "awk", "find", "cpio", "fallocate", "aclocal", "autoconf", "automake", "m4")
+with tempfile.TemporaryDirectory(prefix="host tools with spaces ") as temporary:
+    root = Path(temporary)
+    binaries = root / "selected programs"
+    binaries.mkdir()
+    log = root / "probes"
+    proxy = ("#!" + sys.executable + "\nimport os,sys\n"
+        "from pathlib import Path\n"
+        "with open(os.environ['HOST_TOOL_TEST_LOG'],'a') as f: f.write(Path(sys.argv[0]).name+'\\n')\n"
+        "print('GNU fixture '+Path(sys.argv[0]).name)\n")
+
+    def install(name):
+        executable = binaries / name
+        executable.write_text(proxy)
+        executable.chmod(0o755)
+
+    def configure(name, *options, missing=None):
+        log.write_text("")
+        result = subprocess.run([cmake, "-S", str(repository / "ci/fixtures/host-tools"),
+            "-B", str(root / name), "-G", "Unix Makefiles", "-DCMAKE_MAKE_PROGRAM=" + make,
+            "-DTEST_REPOSITORY=" + str(repository), "-DCMAKE_PROGRAM_PATH=" + str(binaries),
+            "-DCMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH=FALSE", "-DCMAKE_FIND_USE_CMAKE_SYSTEM_PATH=FALSE",
+            *options], env=dict(os.environ, HOST_TOOL_TEST_LOG=str(log)),
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        if missing:
+            assert result.returncode and "requires the host tool '" + missing + "'" in result.stdout, result.stdout
+        else:
+            assert result.returncode == 0, result.stdout
+        return result.stdout
+
+    for tool in tools:
+        install(tool)
+    configure("all", "-DTEST_IMAGES=ON", "-DTEST_UEFI=ON")
+    assert sorted(log.read_text().splitlines()) == sorted(tools), log.read_text()
+    for tool in tools:
+        (binaries / tool).unlink()
+        configure("missing-" + tool, "-DTEST_IMAGES=ON", "-DTEST_UEFI=ON", missing=tool)
+        if tool not in ("bash", "awk"):
+            configure("narrow-" + tool)
+        install(tool)
+    # Explicit selection survives a cached configuration and uses a path with spaces.
+    install("alternate awk")
+    configure("all", "-DREAVEROS_HOST_AWK=" + str(binaries / "alternate awk"))
+    assert log.read_text().splitlines().count("alternate awk") == 1, log.read_text()
+    assert "awk" not in log.read_text().splitlines()
+
+print("Host tools are checked once, selected paths are honored, and missing optional-feature tools fail only when enabled.")

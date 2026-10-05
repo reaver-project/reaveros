@@ -1,4 +1,5 @@
 function(_reaveros_add_initrd_image_target architecture)
+    reaveros_require_host_tools("Initrd images" bash find cpio)
     set(_working_path "${REAVEROS_BINARY_DIR}/images/initrd-${architecture}")
     set(_target_dir "${REAVEROS_BINARY_DIR}/install/images")
     set(_target_path "${_target_dir}/initrd-${architecture}.img")
@@ -13,7 +14,8 @@ function(_reaveros_add_initrd_image_target architecture)
         COMMAND "${CMAKE_COMMAND}" -E copy
             "${REAVEROS_BINARY_DIR}/install/sysroots/${architecture}-hosted/usr/lib/librosestd.so" "${_working_path}"
         COMMAND "${CMAKE_COMMAND}" -E chdir "${_working_path}"
-            bash "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/create-initrd" "${_target_path}"
+            "${REAVEROS_HOST_BASH}" "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/create-initrd"
+            "${_target_path}" "${REAVEROS_HOST_FIND}" "${REAVEROS_HOST_CPIO}"
         BYPRODUCTS "${_target_path}"
         WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
         COMMENT "Packaging initrd for ${architecture}"

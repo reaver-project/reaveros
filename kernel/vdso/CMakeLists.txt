@@ -72,9 +72,10 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/kernel-sources.txt" DESTINATION .)
 set(vdso_symbols_file "${CMAKE_CURRENT_BINARY_DIR}/vdso_symbols.lds")
 
 add_custom_command(OUTPUT ${vdso_symbols_file}
-    COMMAND bash -o pipefail -c
-        "\"$1\" --dyn-syms \"$2\" | tail -n+4 | grep 'FUNC' | grep -v __rose_syscall | awk '{ printf \"%s = __vdso_base + 0x%s;\\n\", $8, $2; }' > \"$3\""
+    COMMAND "${REAVEROS_HOST_BASH}" -o pipefail -c
+        "\"$1\" --dyn-syms \"$2\" | \"$4\" -n+4 | \"$5\" 'FUNC' | \"$5\" -v __rose_syscall | \"$6\" '{ printf \"%s = __vdso_base + 0x%s;\\n\", $8, $2; }' > \"$3\""
         bash "${CMAKE_READELF}" "$<TARGET_FILE:vdso>" "${vdso_symbols_file}"
+        "${REAVEROS_HOST_TAIL}" "${REAVEROS_HOST_GREP}" "${REAVEROS_HOST_AWK}"
     DEPENDS vdso
     VERBATIM
 )
@@ -88,9 +89,10 @@ install(FILES "${vdso_symbols_file}" DESTINATION .)
 set(vdso_offsets_file "${CMAKE_CURRENT_BINARY_DIR}/vdso_offsets.lds")
 
 add_custom_command(OUTPUT ${vdso_offsets_file}
-    COMMAND bash -o pipefail -c
-        "\"$1\" --dyn-syms \"$2\" | tail -n+4 | grep __rose_syscall | awk '{ printf \"%s = __vdso_base + 0x%s;\\n\", $8, $2; }' > \"$3\""
+    COMMAND "${REAVEROS_HOST_BASH}" -o pipefail -c
+        "\"$1\" --dyn-syms \"$2\" | \"$4\" -n+4 | \"$5\" __rose_syscall | \"$6\" '{ printf \"%s = __vdso_base + 0x%s;\\n\", $8, $2; }' > \"$3\""
         bash "${CMAKE_READELF}" "$<TARGET_FILE:vdso>" "${vdso_offsets_file}"
+        "${REAVEROS_HOST_TAIL}" "${REAVEROS_HOST_GREP}" "${REAVEROS_HOST_AWK}"
     DEPENDS vdso
     VERBATIM
 )

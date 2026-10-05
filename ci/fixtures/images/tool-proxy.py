@@ -8,6 +8,9 @@ import sys
 
 
 tool = Path(sys.argv[0]).name
+if sys.argv[1:] == ["--version"]:
+    print("GNU fixture " + tool)
+    sys.exit(0)
 with open(os.environ["IMAGE_TEST_LOG"], "a") as log:
     log.write(json.dumps([tool, *sys.argv[1:]]) + "\n")
 if os.environ.get("IMAGE_TEST_FAIL") == "bad-format" and tool == "mkfs.fat":

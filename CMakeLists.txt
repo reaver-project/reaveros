@@ -63,6 +63,8 @@ _reaveros_validate_selection(REAVEROS_ARCHITECTURES ${_reaveros_architectures})
 _reaveros_validate_selection(REAVEROS_LOADERS uefi)
 
 include(cmake/target_functions.cmake)
+reaveros_require_host_python()
+reaveros_require_host_tools("Toolchain helpers and kernel symbol extraction" bash tail grep awk)
 
 reaveros_add_aggregate_targets("")
 add_custom_target(all-toolchain)

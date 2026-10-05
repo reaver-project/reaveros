@@ -131,7 +131,7 @@ _reaveros_add_ep_file_dependencies(toolchain-llvm download ${patch_dependency})
 ExternalProject_Add_Step(toolchain-llvm
     hydrate-source
     COMMAND "${CMAKE_COMMAND}" -E env "GIT_EXECUTABLE=${GIT_EXECUTABLE}"
-        bash "${REAVEROS_SOURCE_DIR}/toolchain/hydrate-git-archive"
+        "${REAVEROS_HOST_BASH}" "${REAVEROS_SOURCE_DIR}/toolchain/hydrate-git-archive"
         <SOURCE_DIR> ${REAVEROS_LLVM_REPO} ${REAVEROS_LLVM_TAG}
         ${REAVEROS_LLVM_REVISION} <DOWNLOADED_FILE>
     DEPENDEES download update patch

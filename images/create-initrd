@@ -2,17 +2,19 @@
 
 set -euo pipefail
 
-if [[ $# != 1 ]]
+if [[ $# != 3 ]]
 then
-    printf 'usage: %s <output image> (run from the staged initrd directory)\n' "$0" >&2
+    printf 'usage: %s <output image> <find> <cpio> (run from the staged initrd directory)\n' "$0" >&2
     exit 2
 fi
 
 image=$1
+find_executable=$2
+cpio_executable=$3
 temporary=${image}.tmp
 trap 'rm -f -- "${temporary}"' EXIT
 
 # Retain find traversal and cpio metadata. Null delimiters only change filename
 # transport; reproducible ordering/ownership/timestamps are a separate policy.
-find . -print0 | cpio --null --no-absolute-filenames --format=newc --create > "${temporary}"
+"${find_executable}" . -print0 | "${cpio_executable}" --null --no-absolute-filenames --format=newc --create > "${temporary}"
 mv -f -- "${temporary}" "${image}"

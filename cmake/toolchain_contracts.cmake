@@ -10,7 +10,7 @@ function(_reaveros_json_string _output _value)
 endfunction()
 
 function(_reaveros_finalize_toolchain_lifecycles)
-    find_package(Python3 3.9 REQUIRED COMPONENTS Interpreter)
+    reaveros_require_host_python()
     get_property(_projects DIRECTORY PROPERTY _REAVEROS_LIFECYCLE_PROJECTS)
     foreach (_project IN LISTS _projects)
         ExternalProject_Get_Property(${_project} SOURCE_DIR BINARY_DIR INSTALL_DIR STAMP_DIR TMP_DIR UPDATE_DISCONNECTED)

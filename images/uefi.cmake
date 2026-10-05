@@ -1,4 +1,6 @@
 function(_reaveros_add_uefi_image_target architecture)
+    reaveros_require_host_tools("UEFI FAT images" fallocate)
+    reaveros_require_host_python()
     set(_targetfs_contents "${REAVEROS_BINARY_DIR}/images/mount/uefi-efipart-${architecture}")
     set(_targetfs_path "${REAVEROS_BINARY_DIR}/install/images/uefi-efipart-${architecture}.img")
     set(_temporary_path "${_targetfs_path}.tmp")
@@ -9,7 +11,6 @@ function(_reaveros_add_uefi_image_target architecture)
     set(_sector_size 512)
     set(_image_sectors 2880)
     math(EXPR _image_size "${_sector_size} * ${_image_sectors}")
-    find_package(Python3 3.9 REQUIRED COMPONENTS Interpreter)
 
     # One always-run producer owns this staging tree and publishes only a
     # successfully populated filesystem. A failed attempt leaves the last image.
@@ -33,7 +34,7 @@ function(_reaveros_add_uefi_image_target architecture)
             "${_targetfs_contents}/reaver/initrd.img"
 
         COMMAND "${CMAKE_COMMAND}" -E rm -f "${_temporary_path}"
-        COMMAND fallocate -l "${_image_size}" "${_temporary_path}"
+        COMMAND "${REAVEROS_HOST_FALLOCATE}" -l "${_image_size}" "${_temporary_path}"
         COMMAND "${REAVEROS_BINARY_DIR}/install/toolchain/dosfstools/sbin/mkfs.fat" "${_temporary_path}"
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/check-fat-capacity"
             "${_temporary_path}" "${_targetfs_contents}" "${_image_size}" "${_sector_size}"
