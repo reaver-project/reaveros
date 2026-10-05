@@ -74,6 +74,7 @@ done
 "${self_dir}/test-lifecycle-guard"
 "${self_dir}/test-toolchain-lifecycle"
 "${self_dir}/test-helper-contracts"
+"${self_dir}/test-images"
 "${self_dir}/test-component-install"
 "${self_dir}/test-install-transfer"
 "${self_dir}/test-build-dependencies"
