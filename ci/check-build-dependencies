@@ -23,6 +23,7 @@ docker run --rm \
             -DREAVEROS_ARCHITECTURES="${architecture}"
 
         python3 /reaveros/ci/test-toolchain-modes /build
+        python3 /reaveros/ci/test-child-cmake /build
 
         mapfile -t install_targets < <(
             make help \

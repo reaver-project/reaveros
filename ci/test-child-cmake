@@ -1,0 +1,118 @@
+#!/usr/bin/env python3
+
+import json
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import time
+
+if len(sys.argv) != 2:
+    sys.exit("usage: test-child-cmake <configured superbuild with installed tools>")
+root = Path(sys.argv[1]).resolve()
+repository = Path(__file__).resolve().parent.parent
+cmake = root / "install/toolchain/cmake/bin/cmake"
+nm = root / "install/toolchain/llvm/bin/llvm-nm"
+fixture = repository / "ci/fixtures/child-cmake"
+
+
+def run(*command, expected=0):
+    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    assert result.returncode == expected, result.stdout
+    return result.stdout
+
+
+def configure(source, build, mode, *options):
+    return run(str(cmake), "-S", str(source), "-B", str(build), "-G", "Unix Makefiles",
+        "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_TOOLCHAIN_FILE="
+        + str(root / "install/toolchain/files" / ("amd64-" + mode + ".cmake")), *options)
+
+
+def build(directory):
+    return run(str(cmake), "--build", str(directory), "--parallel", "4")
+
+
+def result(library):
+    # Separate processes unload each probe before rebuilding it. The probe's
+    # ELF/SysV function uses no ReaverOS runtime and is callable on native Linux.
+    return int(run(sys.executable, "-c",
+        "import ctypes,sys; print(ctypes.CDLL(sys.argv[1]).consumer())", str(library)))
+
+
+with tempfile.TemporaryDirectory(prefix="child checks with spaces ", dir=root) as temporary:
+    temporary = Path(temporary)
+    for mode in ("freestanding", "hosted"):
+        prefix = temporary / mode / "installed provider"
+        producer = temporary / mode / "producer"
+        consumer = temporary / mode / "consumer"
+        provider_options = ["-DTEST_ROLE=provider", "-DCMAKE_INSTALL_PREFIX=" + str(prefix)]
+        configure(fixture, producer, mode, *provider_options, "-DTEST_VALUE=1", "-DTEST_HEADER_VALUE=10")
+        build(producer)
+        run(str(cmake), "--install", str(producer))
+        flag = "-Wl,--defsym,REAVEROS_SHARED_USER=41"
+        configure(fixture, consumer, mode, "-DTEST_PROVIDER=" + str(prefix),
+            "-DCMAKE_SHARED_LINKER_FLAGS=" + flag, "-DCMAKE_LINK_DEPENDS_USE_LINKER=TRUE")
+        build(consumer)
+        library = consumer / "libconsumer.so"
+        assert result(library) == 11
+        symbols = run(str(nm), "--dynamic", "--defined-only", str(library))
+        assert "retained" in symbols and "ordinary_unused" not in symbols, symbols
+        link = (consumer / "CMakeFiles/consumer.dir/link.txt").read_text()
+        assert flag in link and "--dependency-file" in link, link
+        obj = next(path for path in (consumer / "CMakeFiles/consumer.dir").glob("consumer.cpp.*")
+            if path.suffix in (".o", ".obj"))
+        object_time = obj.stat().st_mtime_ns
+        library_time = library.stat().st_mtime_ns
+        build(consumer)
+        assert library.stat().st_mtime_ns == library_time, "Unchanged build relinked"
+        records = json.loads((consumer / "compile_commands.json").read_text())
+        configure(fixture, consumer, mode, "-DTEST_PROVIDER=" + str(prefix),
+            "-DCMAKE_SHARED_LINKER_FLAGS=" + flag, "-DCMAKE_LINK_DEPENDS_USE_LINKER=TRUE")
+        assert json.loads((consumer / "compile_commands.json").read_text()) == records
+        build(consumer)
+        assert library.stat().st_mtime_ns == library_time, "Reconfiguration relinked"
+
+        # Installation comparisons can use whole-second timestamps. Separate
+        # updates so the fixture checks dependency behavior, not timestamp races.
+        time.sleep(1.1)
+        configure(fixture, producer, mode, *provider_options, "-DTEST_VALUE=2", "-DTEST_HEADER_VALUE=10")
+        build(producer)
+        run(str(cmake), "--install", str(producer))
+        assert (prefix / "libprovided.a").read_bytes() == (producer / "libprovided.a").read_bytes(), "Install skipped changed archive"
+        build(consumer)
+        assert result(library) == 12, "Installed archive change did not relink"
+        assert obj.stat().st_mtime_ns == object_time, "Archive change recompiled consumer"
+
+        time.sleep(1.1)
+        configure(fixture, producer, mode, *provider_options, "-DTEST_VALUE=2", "-DTEST_HEADER_VALUE=20")
+        run(str(cmake), "--install", str(producer))
+        build(consumer)
+        assert result(library) == 22 and obj.stat().st_mtime_ns != object_time
+        (prefix / "libprovided.a").unlink()
+        run(str(cmake), "--install", str(producer))
+        build(consumer)
+        assert (prefix / "libprovided.a").is_file() and result(library) == 22
+
+        for option in ("CMAKE_LINK_DEPENDS_USE_LINKER=FALSE", "CMAKE_LINK_DEPENDS_NO_SHARED=TRUE",
+                       "CMAKE_CXX_LINKER_DEPFILE_SUPPORTED=FALSE"):
+            failed = subprocess.run([str(cmake), "-S", str(fixture), "-B", str(temporary / (mode + option.split("=")[0])),
+                "-G", "Unix Makefiles", "-DTEST_PROVIDER=" + str(prefix), "-D" + option,
+                "-DCMAKE_TOOLCHAIN_FILE=" + str(root / "install/toolchain/files" / ("amd64-" + mode + ".cmake"))],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            assert failed.returncode != 0 and "requires linker-generated dependencies" in " ".join(failed.stdout.split()), failed.stdout
+        print(mode + ": flags, whole-archive, no-op reuse, library/header changes, and deletion recovery passed", flush=True)
+
+    # Exercise the actual child that previously replaced shared-linker flags.
+    actual = temporary / "actual-rosestd"
+    configure(repository / "libraries/rosestd", actual, "tests", "-DCMAKE_SHARED_LINKER_FLAGS=" + flag)
+    build(actual)
+    assert flag in (actual / "src/CMakeFiles/rosestd.dir/link.txt").read_text()
+    assert "CMAKE_SHARED_LINKER_FLAGS:STRING=" + flag in (actual / "CMakeCache.txt").read_text()
+
+    for mode in ("freestanding", "hosted", "uefi", "tests"):
+        output = configure(repository / "libraries/boot-protocol", temporary / ("headers-" + mode), mode,
+            "-DCMAKE_CXX_FLAGS=-f-reaveros-unused-invalid-option")
+        assert "compiler identification" not in output, output
+        build(temporary / ("headers-" + mode))
+
+print("Child CMake contracts passed with the installed patched tools.")
