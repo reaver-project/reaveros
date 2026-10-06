@@ -8,6 +8,15 @@ foreach (_tool aclocal autoconf automake m4)
     file(CREATE_LINK "${REAVEROS_HOST_${_name}}" "${_autotools_path}/${_tool}" SYMBOLIC)
 endforeach()
 
+_reaveros_shell_command(_autotools_cc ${CMAKE_C_COMPILER_LAUNCHER} "${CMAKE_C_COMPILER}")
+_reaveros_shell_command(_autotools_cxx ${CMAKE_CXX_COMPILER_LAUNCHER} "${CMAKE_CXX_COMPILER}")
+_reaveros_ep_arguments(_dosfstools_configure _dosfstools_separator
+    "${CMAKE_CURRENT_SOURCE_DIR};${REAVEROS_BINARY_DIR};${GIT_EXECUTABLE}"
+    "${CMAKE_COMMAND}" -E chdir <SOURCE_DIR>
+    "${CMAKE_COMMAND}" -E env "PATH=${_autotools_path}:$ENV{PATH}"
+    <SOURCE_DIR>/autogen.sh
+    COMMAND <SOURCE_DIR>/configure --prefix=<INSTALL_DIR>
+    "CC=${_autotools_cc}" "CXX=${_autotools_cxx}")
 ExternalProject_Add(toolchain-dosfstools
     GIT_REPOSITORY ${REAVEROS_DOSFSTOOLS_REPO}
     GIT_TAG ${REAVEROS_DOSFSTOOLS_TAG}
@@ -22,12 +31,8 @@ ExternalProject_Add(toolchain-dosfstools
 
     ${_REAVEROS_CONFIGURE_HANDLED_BY_BUILD}
 
-    CONFIGURE_COMMAND "${CMAKE_COMMAND}" -E chdir <SOURCE_DIR>
-        "${CMAKE_COMMAND}" -E env "PATH=${_autotools_path}:$ENV{PATH}"
-        <SOURCE_DIR>/autogen.sh
-    COMMAND <SOURCE_DIR>/configure --prefix=<INSTALL_DIR>
-        "CC=${CMAKE_C_COMPILER_LAUNCHER} ${CMAKE_C_COMPILER}"
-        "CXX=${CMAKE_CXX_COMPILER_LAUNCHER} ${CMAKE_CXX_COMPILER}"
+    LIST_SEPARATOR "${_dosfstools_separator}"
+    CONFIGURE_COMMAND ${_dosfstools_configure}
     BUILD_COMMAND $(MAKE)
     INSTALL_COMMAND $(MAKE) install
 )
@@ -45,6 +50,10 @@ reaveros_add_ep_source_identity_step(toolchain-dosfstools ${REAVEROS_DOSFSTOOLS_
 
 reaveros_register_target(toolchain-dosfstools-install toolchain)
 
+_reaveros_ep_arguments(_mtools_configure _mtools_separator
+    "${CMAKE_CURRENT_SOURCE_DIR};${REAVEROS_BINARY_DIR}"
+    <SOURCE_DIR>/configure --prefix=<INSTALL_DIR>
+    "CC=${_autotools_cc}" "CXX=${_autotools_cxx}")
 ExternalProject_Add(toolchain-mtools
     URL ${REAVEROS_MTOOLS_DIR}/${REAVEROS_MTOOLS_VER}
     URL_HASH SHA256=${REAVEROS_MTOOLS_SHA256}
@@ -57,9 +66,8 @@ ExternalProject_Add(toolchain-mtools
 
     ${_REAVEROS_CONFIGURE_HANDLED_BY_BUILD}
 
-    CONFIGURE_COMMAND <SOURCE_DIR>/configure --prefix=<INSTALL_DIR>
-        "CC=${CMAKE_C_COMPILER_LAUNCHER} ${CMAKE_C_COMPILER}"
-        "CXX=${CMAKE_CXX_COMPILER_LAUNCHER} ${CMAKE_CXX_COMPILER}"
+    LIST_SEPARATOR "${_mtools_separator}"
+    CONFIGURE_COMMAND ${_mtools_configure}
     BUILD_COMMAND $(MAKE)
     INSTALL_COMMAND $(MAKE) install
 )

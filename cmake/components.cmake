@@ -1,4 +1,5 @@
 include_guard(GLOBAL)
+include("${CMAKE_CURRENT_LIST_DIR}/external_project_arguments.cmake")
 
 function(_reaveros_expand_component_value _output _input _architecture _mode _context)
     set(_value "${_input}")
@@ -143,6 +144,18 @@ function(reaveros_add_component)
                 file(GENERATE OUTPUT "${_transfer_file}" CONTENT "${_transfer_from}\n${_transfer_roots}\n")
             endif()
 
+            _reaveros_ep_arguments(_configure_args _list_separator
+                "${_component_SOURCE_DIR};${_project_prefix};${_transfer_file};${_component_name};${REAVEROS_CMAKE};${CMAKE_COMMAND}"
+                --no-warn-unused-cli
+                "-DCMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
+                "-DCMAKE_C_COMPILER_LAUNCHER=${CMAKE_C_COMPILER_LAUNCHER}"
+                "-DCMAKE_CXX_COMPILER_LAUNCHER=${CMAKE_CXX_COMPILER_LAUNCHER}"
+                "-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
+                "-DCMAKE_TOOLCHAIN_FILE=${REAVEROS_BINARY_DIR}/install/toolchain/files/${_architecture}-${_mode}.cmake"
+                "-DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>"
+                "-DREAVEROS_ARCH=${_architecture}"
+                "-DREAVEROS_THORN=${REAVEROS_THORN}"
+                ${_cmake_args})
             ExternalProject_Add(${_component_name}
                 EXCLUDE_FROM_ALL TRUE
                 PREFIX "${_project_prefix}"
@@ -157,6 +170,7 @@ function(reaveros_add_component)
                 INSTALL_DIR "${REAVEROS_BINARY_DIR}/install/${_install_path}"
 
                 ${_REAVEROS_CONFIGURE_HANDLED_BY_BUILD}
+                LIST_SEPARATOR "${_list_separator}"
 
                 INSTALL_COMMAND "${CMAKE_COMMAND}"
                     "-DREAVEROS_BUILD_ROOT=${REAVEROS_BINARY_DIR}"
@@ -167,17 +181,7 @@ function(reaveros_add_component)
                     -P "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/install_component.cmake"
 
                 CMAKE_COMMAND "${REAVEROS_CMAKE}"
-                CMAKE_ARGS
-                    --no-warn-unused-cli
-                    "-DCMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
-                    "-DCMAKE_C_COMPILER_LAUNCHER=${CMAKE_C_COMPILER_LAUNCHER}"
-                    "-DCMAKE_CXX_COMPILER_LAUNCHER=${CMAKE_CXX_COMPILER_LAUNCHER}"
-                    "-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
-                    "-DCMAKE_TOOLCHAIN_FILE=${REAVEROS_BINARY_DIR}/install/toolchain/files/${_architecture}-${_mode}.cmake"
-                    "-DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>"
-                    "-DREAVEROS_ARCH=${_architecture}"
-                    "-DREAVEROS_THORN=${REAVEROS_THORN}"
-                    ${_cmake_args}
+                CMAKE_ARGS ${_configure_args}
             )
 
             # Existing child manifests let the ownership check adopt a build

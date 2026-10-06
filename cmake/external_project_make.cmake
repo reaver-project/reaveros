@@ -83,6 +83,12 @@ function(_reaveros_ep_configuration_identity _output _project)
         get_property(_configure TARGET ${_project} PROPERTY _EP_CONFIGURE_COMMAND)
     endif()
     list(FILTER _args EXCLUDE REGEX "^-D(CMAKE_(C|CXX)_COMPILER_LAUNCHER|LLVM_PARALLEL_LINK_JOBS)=")
+    # Retain the historical LLVM list spelling in fingerprints. Repairing
+    # command transport must not invalidate unchanged installed toolchains.
+    get_property(_separator TARGET ${_project} PROPERTY _EP_LIST_SEPARATOR)
+    if (_separator)
+        string(REPLACE "${_separator}" "|" _args "${_args}")
+    endif()
     string(SHA256 _identity "${_args}\n${_configure}")
     set(${_output} "${_identity}" PARENT_SCOPE)
 endfunction()

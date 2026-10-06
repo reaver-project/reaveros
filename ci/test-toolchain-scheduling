@@ -31,11 +31,12 @@ with tempfile.TemporaryDirectory(prefix="toolchain scheduling with spaces ") as 
         for path in descriptors for output in json.loads(path.read_text())["required_outputs"]]
     timestamps = {path: path.stat().st_mtime_ns for path in outputs}
     launcher = shutil.which("env")  # Forward the unchanged compiler command.
-    run(*command, "-DCMAKE_C_COMPILER_LAUNCHER=" + launcher, "-DCMAKE_CXX_COMPILER_LAUNCHER=" + launcher)
-    assert {path: json.loads(path.read_text())["identity"] for path in descriptors} == before
-    output = run("make", "-C", str(root), "-j4", "toolchain-dosfstools-install", "toolchain-mtools-install")
-    assert "Performing " not in output and "recovering" not in output, output
-    assert all(path.stat().st_mtime_ns == timestamp for path, timestamp in timestamps.items())
+    for selected in (launcher, launcher + ";LAUNCH_ENV=left|right __reaveros_list_separator__"):
+        run(*command, "-DCMAKE_C_COMPILER_LAUNCHER=" + selected, "-DCMAKE_CXX_COMPILER_LAUNCHER=" + selected)
+        assert {path: json.loads(path.read_text())["identity"] for path in descriptors} == before
+        output = run("make", "-C", str(root), "-j4", "toolchain-dosfstools-install", "toolchain-mtools-install")
+        assert "Performing " not in output and "recovering" not in output, output
+        assert all(path.stat().st_mtime_ns == timestamp for path, timestamp in timestamps.items())
     for project in ("dosfstools", "mtools"):
         state = json.loads((root / "toolchain" / ("toolchain-" + project + "-installed-state.json")).read_text())
         assert state["pruned"]

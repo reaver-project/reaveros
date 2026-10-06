@@ -87,6 +87,26 @@ reaveros_patch_dependency(
 )
 
 string(REGEX REPLACE "^llvmorg-" "" _llvm_source_version "${REAVEROS_LLVM_TAG}")
+# Convert the existing runtime-list representation before argument transport.
+string(REPLACE "|" ";" _runtime_targets "${_runtime_targets}")
+string(REPLACE "|" ";" _llvm_backends "${_llvm_backends}")
+string(REPLACE "|" "\\;" _runtime_flags "${_runtime_flags}")
+_reaveros_ep_arguments(_llvm_args _llvm_separator
+    "${CMAKE_CURRENT_SOURCE_DIR};${REAVEROS_BINARY_DIR};${REAVEROS_CMAKE};${GIT_EXECUTABLE}"
+    "-DCMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
+    "-DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}"
+    "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
+    "-DCMAKE_C_COMPILER_LAUNCHER=${CMAKE_C_COMPILER_LAUNCHER}"
+    "-DCMAKE_CXX_COMPILER_LAUNCHER=${CMAKE_CXX_COMPILER_LAUNCHER}"
+    -DCMAKE_BUILD_TYPE=Release -Wno-dev -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>
+    "-DLLVM_TARGETS_TO_BUILD=${_llvm_backends}"
+    "-DLLVM_ENABLE_PROJECTS=clang;lld"
+    "-DLLVM_ENABLE_RUNTIMES=libunwind;libcxx;libcxxabi"
+    "-DLLVM_RUNTIME_TARGETS=${_runtime_targets}"
+    "-DLLVM_BUILTIN_TARGETS=${_runtime_targets}"
+    ${_runtime_flags}
+    "-DLLVM_PARALLEL_LINK_JOBS=${REAVEROS_LLVM_PARALLEL_LINK_JOBS}"
+    -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_EXAMPLES=OFF)
 ExternalProject_Add(toolchain-llvm
     URL ${REAVEROS_LLVM_REPO}/releases/download/${REAVEROS_LLVM_TAG}/llvm-project-${_llvm_source_version}.src.tar.xz
     URL_HASH SHA256=${REAVEROS_LLVM_SOURCE_SHA256}
@@ -103,29 +123,12 @@ ExternalProject_Add(toolchain-llvm
     SOURCE_SUBDIR llvm
     ${_REAVEROS_CONFIGURE_HANDLED_BY_BUILD}
 
-    LIST_SEPARATOR |
+    LIST_SEPARATOR "${_llvm_separator}"
 
     PATCH_COMMAND ""
 
     CMAKE_COMMAND ${REAVEROS_CMAKE}
-    CMAKE_ARGS
-        -DCMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}
-        -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
-        -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
-        -DCMAKE_C_COMPILER_LAUNCHER=${CMAKE_C_COMPILER_LAUNCHER}
-        -DCMAKE_CXX_COMPILER_LAUNCHER=${CMAKE_CXX_COMPILER_LAUNCHER}
-        -DCMAKE_BUILD_TYPE=Release
-        -Wno-dev
-        -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>
-        -DLLVM_TARGETS_TO_BUILD=${_llvm_backends}
-        -DLLVM_ENABLE_PROJECTS=clang|lld
-        -DLLVM_ENABLE_RUNTIMES=libunwind|libcxx|libcxxabi
-        -DLLVM_RUNTIME_TARGETS=${_runtime_targets}
-        -DLLVM_BUILTIN_TARGETS=${_runtime_targets}
-        "${_runtime_flags}"
-        -DLLVM_PARALLEL_LINK_JOBS=${REAVEROS_LLVM_PARALLEL_LINK_JOBS}
-        -DLLVM_INCLUDE_TESTS=OFF
-        -DLLVM_INCLUDE_EXAMPLES=OFF
+    CMAKE_ARGS ${_llvm_args}
 )
 _reaveros_add_ep_file_dependencies(toolchain-llvm download ${patch_dependency})
 ExternalProject_Add_Step(toolchain-llvm

@@ -1,0 +1,125 @@
+#!/usr/bin/env python3
+
+import json
+from pathlib import Path
+import shlex
+import shutil
+import subprocess
+import sys
+import tempfile
+
+
+repository = Path(__file__).resolve().parent.parent
+fixture = repository / "ci/fixtures/component-install"
+
+
+def run(*command, expected=0):
+    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    assert result.returncode == expected, result.stdout
+    assert "jobserver unavailable" not in result.stdout, result.stdout
+    return result.stdout
+
+
+def cache_values(path):
+    return {line.split(":", 1)[0]: line.split("=", 1)[1] for line in path.read_text().splitlines()
+        if not line.startswith(("#", "//")) and ":" in line and "=" in line}
+
+
+with tempfile.TemporaryDirectory(prefix="external project arguments with spaces ") as temporary:
+    root = Path(temporary)
+    source = root / "source"
+    shutil.copytree(fixture, source)
+    for name in ("alpha", "beta"):
+        component = source / name
+        shutil.copytree(fixture / "component", component)
+        (component / "files").mkdir()
+        (component / "files" / (name + ".h")).write_text(name + " header\n")
+        (component / "hosted.h").write_text(name + " hosted\n")
+    declarations = source / "CMakeLists.txt"
+    declarations.write_text(declarations.read_text().replace("NAME alpha ",
+        'CMAKE_ARGS "-DARGUMENT_ITEMS:STRING=first;;third;" '
+        '"-DLITERAL_PIPE:STRING=left|right" '
+        '"-DLITERAL_SEPARATOR:STRING=__reaveros_list_separator__"\n    NAME alpha.part ')
+        .replace("alpha-freestanding-amd64", "alpha.part-freestanding-amd64"))
+    log = root / "launcher 'quotes' | __reaveros_list_separator__"
+    launcher = ";".join((sys.executable,
+        str(repository / "ci/fixtures/toolchain-modes/launcher.py"), str(log)))
+    build = root / "build"
+    command = ["cmake", "-S", str(source), "-B", str(build), "-G", "Unix Makefiles",
+        "-DTEST_REPOSITORY=" + str(repository), "-DCMAKE_CXX_COMPILER_LAUNCHER=" + launcher]
+    run(*command)
+    run("make", "-C", str(build), "-j4", "components")
+    calls = [json.loads(line) for line in log.read_text().splitlines()]
+    assert any(str(source / "alpha/main.cpp") in call for call in calls)
+    assert any(str(source / "beta/main.cpp") in call for call in calls)
+    child = build / "alpha.part-freestanding-amd64-prefix/src/alpha.part-freestanding-amd64-build"
+    values = cache_values(child / "CMakeCache.txt")
+    assert values["CMAKE_CXX_COMPILER_LAUNCHER"] == launcher, values
+    assert values["ARGUMENT_ITEMS"] == "first;;third;", values
+    assert values["LITERAL_PIPE"] == "left|right", values
+    assert values["LITERAL_SEPARATOR"] == "__reaveros_list_separator__", values
+    sysroot = build / "install/sysroots/amd64-freestanding"
+    owner = build / "cmake/install-ownership/alpha.part-freestanding-amd64.txt"
+    assert str(sysroot / "usr/include/alpha.h") in owner.read_text()
+    before = (sysroot / "usr/bin/alpha").stat().st_mtime_ns
+    run(*command)
+    run("make", "-C", str(build), "-j4", "components")
+    assert (sysroot / "usr/bin/alpha").stat().st_mtime_ns == before
+    conflict = source / "beta/files/alpha.h"
+    conflict.write_text("conflicting header\n")
+    output = run("make", "-C", str(build), "beta-freestanding-amd64", expected=2)
+    assert "Install ownership conflict" in output and "alpha.part-freestanding-amd64" in output, output
+    assert (sysroot / "usr/include/alpha.h").read_text() == "alpha header\n"
+    conflict.unlink()
+    (source / "alpha/files/alpha.h").rename(source / "alpha/files/renamed.h")
+    run("make", "-C", str(build), "alpha.part-freestanding-amd64")
+    assert not (sysroot / "usr/include/alpha.h").exists()
+    assert (sysroot / "usr/include/renamed.h").is_file()
+    assert "renamed.h" in owner.read_text()
+
+with tempfile.TemporaryDirectory(prefix="upstream arguments with 'quotes' ") as temporary:
+    root = Path(temporary)
+    log = root / "launcher log | __reaveros_list_separator__"
+    launcher = ";".join((sys.executable,
+        str(repository / "ci/fixtures/toolchain-modes/launcher.py"), str(log)))
+    parent = root / "parent"
+    run("cmake", "-S", str(repository), "-B", str(parent), "-G", "Unix Makefiles",
+        "-DREAVEROS_USE_CACHE=OFF", "-DREAVEROS_ENABLE_UNIT_TESTS=ON",
+        "-DCMAKE_C_COMPILER_LAUNCHER=" + launcher, "-DCMAKE_CXX_COMPILER_LAUNCHER=" + launcher,
+        "-DCMAKE_PROJECT_INCLUDE=" + str(repository / "ci/fixtures/external-project-arguments/project-include.cmake"))
+    records = json.loads((parent / "toolchain-arguments.json").read_text())
+    source = root / "source"
+    shutil.copytree(fixture / "component", source)
+    (source / "files").mkdir()
+    (source / "hosted.h").write_text("header\n")
+    for project in ("toolchain-cmake", "toolchain-llvm", "toolchain-thorn"):
+        arguments = records[project]["CMAKE_ARGS"]
+        child = root / project
+        run("cmake", "-S", str(source), "-B", str(child), "-G", "Unix Makefiles",
+            *arguments, "-DCMAKE_INSTALL_PREFIX=" + str(child / "install"))
+        run("make", "-C", str(child), "-j4")
+        values = cache_values(child / "CMakeCache.txt")
+        assert values["CMAKE_C_COMPILER_LAUNCHER"] == launcher, values
+        assert values["CMAKE_CXX_COMPILER_LAUNCHER"] == launcher, values
+        if project == "toolchain-llvm":
+            assert values["LLVM_ENABLE_PROJECTS"] == "clang;lld", values
+            assert values["LLVM_RUNTIME_TARGETS"] == "default;x86_64-pc-reaveros-none;x86_64-pc-reaveros-elf", values
+            assert values["RUNTIMES_default_LLVM_ENABLE_RUNTIMES"] == "compiler-rt;libunwind;libcxx;libcxxabi", values
+    for project in ("toolchain-dosfstools", "toolchain-mtools"):
+        command = records[project]["CONFIGURE_COMMAND"]
+        if "COMMAND" in command:
+            command = command[command.index("COMMAND") + 1:]
+        assignments = dict(argument.split("=", 1) for argument in command if argument.startswith(("CC=", "CXX=")))
+        for language, compiler in (("CC", "cc"), ("CXX", "c++")):
+            assert shlex.split(assignments[language])[:3] == launcher.split(";"), assignments
+            source_file = root / (project + "-" + language + (".c" if language == "CC" else ".cpp"))
+            source_file.write_text("int probe(void) { return 37; }\n")
+            output = source_file.with_suffix(".o")
+            result = subprocess.run(assignments[language] + " -c " + shlex.quote(str(source_file))
+                + " -o " + shlex.quote(str(output)), shell=True,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            assert result.returncode == 0 and output.is_file(), result.stdout
+    calls = [json.loads(line) for line in log.read_text().splitlines()]
+    assert len(calls) >= 10, calls
+
+print("ExternalProject preserves component/upstream launcher argv, cache lists, literal pipes, and dotted install ownership.")
