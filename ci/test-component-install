@@ -11,8 +11,8 @@ repository = Path(__file__).resolve().parent.parent
 fixture = repository / "ci/fixtures/component-install"
 
 
-def run(*command, succeeds=True):
-    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+def run(*command, succeeds=True, env=None):
+    result = subprocess.run(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     if (result.returncode == 0) != succeeds:
         raise RuntimeError(result.stdout)
     if "jobserver unavailable" in result.stdout:
@@ -58,6 +58,18 @@ with tempfile.TemporaryDirectory() as temporary:
         assert link.is_symlink() and link.resolve().is_file()
         assert (hosted / "usr/include" / name / "hosted.h").is_file()
     assert str(hosted / "usr/include/alpha/hosted.h") in alpha_owner.read_text()
+
+    # Ambient install modes cannot create stage-relative published links.
+    # Standard versioned-library links remain valid under forced copy staging.
+    for mode in ("REL_SYMLINK", "ABS_SYMLINK", "REL_SYMLINK_OR_COPY"):
+        shutil.rmtree(sysroot)
+        run("make", "-C", str(build), "-j4", "components", env=dict(os.environ, CMAKE_INSTALL_MODE=mode))
+        assert alpha_header.is_file() and not alpha_header.is_symlink()
+        assert beta_header.is_file() and not beta_header.is_symlink()
+        for name in ("alpha", "beta"):
+            run(str(sysroot / "usr/bin" / name))
+            link = sysroot / "usr/lib" / ("lib" + name + "-library.so")
+            assert link.is_symlink() and link.resolve().is_file()
 
     # The catalogs support the cold reset performed by dependency CI.
     project = "alpha-freestanding-amd64"

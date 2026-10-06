@@ -136,8 +136,10 @@ list(APPEND _previous_files ${_transfer_files})
 # syscall/vDSO outputs. Nothing reaches the shared sysroots before validation.
 file(REMOVE_RECURSE "${_stage}")
 file(MAKE_DIRECTORY "${_stage}")
+# Publication relocates the stage, so CMake-created relative source links break.
+# COPY retains ordinary package-internal symlinks such as versioned libraries.
 execute_process(
-    COMMAND "${CMAKE_COMMAND}" -E env "DESTDIR=${_stage}"
+    COMMAND "${CMAKE_COMMAND}" -E env "DESTDIR=${_stage}" "CMAKE_INSTALL_MODE=COPY"
         "${REAVEROS_INSTALL_CMAKE}" --install "${REAVEROS_INSTALL_BINARY_DIR}"
     RESULT_VARIABLE _result
 )

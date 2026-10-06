@@ -127,6 +127,8 @@ set(component_names_${component} [==[${display_name}]==])
             TEST_INCLUDE_FILE "${_trampoline}"
     )
 
-    add_custom_target(run-tests ctest .)
+    add_custom_target(run-tests
+        COMMAND "${REAVEROS_CTEST}" --test-dir "${CMAKE_CURRENT_BINARY_DIR}"
+        VERBATIM)
     add_dependencies(run-tests all-build-tests)
 endif()

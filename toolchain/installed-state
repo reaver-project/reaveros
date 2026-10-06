@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -34,6 +35,7 @@ for name, path in expected.items():
     if directories[name].resolve() != path or directories[name].is_symlink():
         fail(f"refusing unexpected {name} directory for {project}: {directories[name]}")
 stamps = {name: Path(value) for name, value in contract["stamps"].items()}
+completed_steps = tuple(dict.fromkeys(("mkdir", "download", *contract["prune_order"], "done", "complete")))
 for name, path in stamps.items():
     expected_stamp = root / "toolchain/CMakeFiles" / (project + "-complete") if name == "complete" \
         else expected["stamp"] / (project + "-" + name)
@@ -56,7 +58,7 @@ if archive and not Path(archive).resolve().is_relative_to(prefix):
 
 
 def write_state(pruned):
-    state = {"version": 1, "identity": contract["identity"], "pruned": pruned}
+    state = {"version": 1, "identity": contract["identity"], "pruned": pruned, "inputs": input_identity()}
     contents = json.dumps(state, sort_keys=True, indent=2) + "\n"
     if record.exists() and record.read_text() == contents:
         return
@@ -64,6 +66,21 @@ def write_state(pruned):
     temporary = record.with_suffix(".tmp")
     temporary.write_text(contents)
     temporary.replace(record)
+
+
+def input_identity():
+    return {path: hashlib.sha256(Path(path).read_bytes()).hexdigest()
+            for path, step in contract["legacy_inputs"].items()
+            if step != "configure" and Path(path).exists()}
+
+
+def inputs_match(state):
+    inputs = input_identity()
+    if "inputs" in state:
+        return state["inputs"] == inputs
+    # Compatibility with completion records predating content snapshots.
+    return stamps["install"].is_file() and all(Path(path).stat().st_mtime_ns
+        <= stamps["install"].stat().st_mtime_ns for path in inputs)
 
 
 def legacy_matches():
@@ -95,7 +112,7 @@ def clear_steps(steps):
 
 def recover(state, missing):
     previous = state.get("identity", {}) if state else {}
-    changed = previous != contract["identity"] if state else not legacy_matches()
+    changed = (previous != contract["identity"] or not inputs_match(state)) if state else not legacy_matches()
     restore = not populated("source") or not populated("binary")
     if changed:
         for name in ("binary", "install"):
@@ -134,15 +151,18 @@ if action == "record":
     write_state(bool(state and state.get("pruned")) and not populated("binary"))
 elif action == "check":
     if state and state.get("identity") == contract["identity"] and not missing:
-        # A scheduling-only configure-command change cannot rebuild a pruned
-        # toolchain. Its output identity is unchanged, so retain its later steps.
-        cfgcmd = next((Path(path) for path, step in contract["legacy_inputs"].items()
-                       if step == "configure"), None)
-        if state.get("pruned") and cfgcmd and cfgcmd.exists() \
-                and (not stamps["configure"].exists()
-                     or cfgcmd.stat().st_mtime_ns > stamps["configure"].stat().st_mtime_ns):
-            for step in ("configure", "build", "install", "done", "complete"):
-                stamps[step].touch()
+        if state.get("pruned"):
+            if not inputs_match(state):
+                recover(state, missing)
+            else:
+                # Recipe changes can remove stamps or regenerate prerequisite
+                # metadata without changing semantic inputs. Refresh the whole
+                # completed chain in dependency order so the proven installation
+                # never enters deleted trees.
+                for step in completed_steps:
+                    stamps[step].touch()
+                if "inputs" not in state:
+                    write_state(True)
     elif state or stamps["install"].exists():
         if not state and not missing and legacy_matches():
             write_state(not populated("source") or not populated("binary"))
@@ -150,7 +170,8 @@ elif action == "check":
         else:
             recover(state, missing)
 elif action == "prune":
-    if not stamps["install"].is_file() or missing or (state and state.get("identity") != contract["identity"]) \
+    if not stamps["install"].is_file() or missing or (state and (state.get("identity") != contract["identity"]
+            or not inputs_match(state))) \
             or (not state and not legacy_matches()):
         fail(f"refusing to prune incomplete or stale installation of {project}: {missing}")
     for name in ("source", "binary"):

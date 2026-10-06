@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import time
@@ -42,4 +43,18 @@ with tempfile.TemporaryDirectory(prefix="lifecycle guard with spaces ") as tempo
         assert "conflicting operation" in result.stdout and time.monotonic() < deadline, result.stdout
         time.sleep(0.02)
 
-print("Project leases reject conflicting operations, allow independent projects, and release on Make exit.")
+with tempfile.TemporaryDirectory(prefix="selected-gnu-make-") as temporary:
+    directory = Path(temporary)
+    for kind in ("alias", "copy"):
+        make = directory / ("selected-executable-" + kind)
+        if kind == "alias":
+            make.symlink_to(shutil.which("make"))
+        else:
+            shutil.copy2(shutil.which("make"), make)
+        root = directory / (kind + " build with spaces")
+        subprocess.run(["cmake", "-S", str(repository / "ci/fixtures/lifecycle-guard"),
+            "-B", str(root), "-G", "Unix Makefiles", "-DTEST_REPOSITORY=" + str(repository),
+            "-DCMAKE_MAKE_PROGRAM=" + str(make)], check=True, stdout=subprocess.DEVNULL)
+        subprocess.run([str(make), "-C", str(root), "one-prune"], check=True, stdout=subprocess.DEVNULL)
+
+print("Project leases honor selected Make executables, reject conflicts, allow independent projects, and release on Make exit.")

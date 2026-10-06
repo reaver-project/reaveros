@@ -37,5 +37,5 @@ docker run --rm \
             -DREAVEROS_ARCHITECTURES="${architecture}" \
             -DCMAKE_BUILD_TYPE="${configuration}"
         make "all-${architecture}-build-tests" -j"$(nproc)"
-        ctest --output-on-failure -j"$(nproc)"
+        install/toolchain/cmake/bin/ctest --output-on-failure -j"$(nproc)"
     ' -- "${architecture}" "${configuration}"

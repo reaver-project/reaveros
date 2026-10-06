@@ -13,10 +13,11 @@ def fail(message):
     sys.exit("Toolchain lifecycle: " + message)
 
 
-if len(sys.argv) != 4 or sys.argv[3] not in ("build", "prune"):
-    fail("usage: guard-lifecycle <build root> <project> <build|prune>")
+if len(sys.argv) != 5 or sys.argv[3] not in ("build", "prune"):
+    fail("usage: guard-lifecycle <build root> <project> <build|prune> <Make executable>")
 root = Path(sys.argv[1]).resolve()
-project, operation = sys.argv[2:]
+project, operation = sys.argv[2:4]
+make = Path(sys.argv[4]).resolve(strict=True)
 if root == Path("/") or not re.fullmatch(r"toolchain-[a-z0-9-]+", project):
     fail("invalid build root or project")
 
@@ -30,7 +31,7 @@ while pid > 1:
         process = Path("/proc") / str(pid)
         fields = (process / "stat").read_text().rsplit(")", 1)[1].split()
         parent = int(fields[1])
-        if (process / "comm").read_text().strip() in ("make", "gmake"):
+        if (process / "exe").samefile(make):
             cwd = (process / "cwd").resolve()
             if cwd.is_relative_to(root):
                 owner = {"pid": pid, "start": fields[19], "operation": operation}

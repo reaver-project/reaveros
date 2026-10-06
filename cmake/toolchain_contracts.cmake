@@ -46,6 +46,16 @@ function(_reaveros_finalize_toolchain_lifecycles)
         string(JSON _contract SET "${_contract}" identity configuration "${_value}")
         string(JSON _contract SET "${_contract}" legacy_inputs
             "${REAVEROS_BINARY_DIR}/toolchain/${_project}-source-inputs" "\"invalidate-build\"")
+        foreach (_input tag invalidation)
+            set(_file "${REAVEROS_BINARY_DIR}/toolchain/${_project}-${_input}-inputs")
+            set(_step invalidate-build)
+            if (_input STREQUAL "tag")
+                set(_step set-to-tag)
+            endif()
+            if (EXISTS "${_file}")
+                string(JSON _contract SET "${_contract}" legacy_inputs "${_file}" "\"${_step}\"")
+            endif()
+        endforeach()
         _reaveros_ep_configure_input(_cfgcmd "${_project}")
         string(JSON _contract SET "${_contract}" legacy_inputs "${_cfgcmd}" "\"configure\"")
         foreach (_step mkdir download update update_disconnected patch patch_disconnected
@@ -80,11 +90,11 @@ function(_reaveros_finalize_toolchain_lifecycles)
         file(GENERATE OUTPUT "${_file}" CONTENT "${_contract}\n")
         set(_helpers "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../toolchain")
         add_custom_target(${_project}-guard
-            COMMAND "${Python3_EXECUTABLE}" "${_helpers}/guard-lifecycle" "${REAVEROS_BINARY_DIR}" "${_project}" build
+            COMMAND "${Python3_EXECUTABLE}" "${_helpers}/guard-lifecycle" "${REAVEROS_BINARY_DIR}" "${_project}" build "${CMAKE_MAKE_PROGRAM}"
             COMMAND "${Python3_EXECUTABLE}" "${_helpers}/installed-state" check "${_file}"
             VERBATIM)
         add_custom_target(${_project}-prune-guard
-            COMMAND "${Python3_EXECUTABLE}" "${_helpers}/guard-lifecycle" "${REAVEROS_BINARY_DIR}" "${_project}" prune
+            COMMAND "${Python3_EXECUTABLE}" "${_helpers}/guard-lifecycle" "${REAVEROS_BINARY_DIR}" "${_project}" prune "${CMAKE_MAKE_PROGRAM}"
             VERBATIM)
         add_dependencies(${_project} ${_project}-guard)
         foreach (_step mkdir download update update_disconnected patch patch_disconnected

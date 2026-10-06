@@ -34,14 +34,18 @@ with tempfile.TemporaryDirectory(prefix="toolchain state with spaces ") as tempo
     patch.write_text("patch version one\n")
     build = root / "build"
 
-    def configure(value=1, jobs=2):
+    def configure(value=1, jobs=2, *options):
         return run("cmake", "-S", str(fixture), "-B", str(build), "-G", "Unix Makefiles",
             "-DTEST_REPOSITORY=" + str(repository), "-DTEST_ARCHIVE=" + str(archive),
             "-DTEST_ARCHIVE_HASH=" + digest, "-DTEST_PATCH_INPUT=" + str(patch),
-            "-DTEST_VALUE=" + str(value), "-DTEST_JOBS=" + str(jobs))
+            "-DTEST_VALUE=" + str(value), "-DTEST_JOBS=" + str(jobs), *options)
 
     def make(target="toolchain-example-install", expected=0):
         return run("make", "-C", str(build), "-j4", target, expected=expected)
+
+    def unpopulated(path):
+        # ExternalProject recreates empty directories during configuration.
+        return not path.exists() or not any(path.iterdir())
 
     prefix = build / "toolchain/toolchain-example-prefix"
     source = prefix / "src/toolchain-example"
@@ -83,6 +87,39 @@ with tempfile.TemporaryDirectory(prefix="toolchain state with spaces ") as tempo
     assert run(str(installed)).strip() == "1"
     assert installed.stat().st_mtime_ns == first[installed]
 
+    # Selecting the same shell through another path changes source-step recipes,
+    # not installed inputs. Neither deleted sources nor a reinstall are needed.
+    selected_shell = root / "selected shell"
+    selected_shell.symlink_to(shutil.which("bash"))
+    configure(1, 2, "-DREAVEROS_HOST_BASH=" + str(selected_shell))
+    assert "Performing " not in make()
+    assert unpopulated(source) and unpopulated(binary)
+    assert installed.stat().st_mtime_ns == first[installed]
+    # Old completion records adopt fingerprints without forcing a source replay.
+    old_record = json.loads(state.read_text())
+    old_record.pop("inputs")
+    state.write_text(json.dumps(old_record))
+    configure(1, 2, "-DREAVEROS_HOST_BASH=" + shutil.which("bash"))
+    assert "Performing " not in make()
+    assert "inputs" in json.loads(state.read_text())
+    assert unpopulated(source) and unpopulated(binary)
+
+    # Changing the primary CMake executable can invalidate earlier recipes too.
+    contract = json.loads((build / "toolchain/toolchain-example-lifecycle.json").read_text())
+    for step in ("mkdir", "download"):
+        Path(contract["stamps"][step]).unlink()
+    assert "Performing " not in make()
+    assert unpopulated(source) and unpopulated(binary)
+    assert installed.stat().st_mtime_ns == first[installed]
+
+    # Generated step metadata can change without removing any output stamp.
+    metadata = prefix / "src/toolchain-example-stamp/toolchain-example-urlinfo.txt"
+    assert metadata.is_file()
+    metadata.touch()
+    assert "Performing " not in make()
+    assert unpopulated(source) and unpopulated(binary)
+    assert installed.stat().st_mtime_ns == first[installed]
+
     # A scheduling-only change preserves a pruned installation.
     assert json.loads(state.read_text())["pruned"], (state.read_text(), list(binary.iterdir()))
     configure(jobs=8)
@@ -118,6 +155,20 @@ with tempfile.TemporaryDirectory(prefix="toolchain state with spaces ") as tempo
     configure(value=2, jobs=8)
     assert "recovering changed installed inputs" in make()
     assert run(str(installed)).strip() == "12"
+
+    # A helper fingerprint change must restore pruned trees before replay,
+    # even when source/patch/configuration identity is otherwise unchanged.
+    make("toolchain-example-prune")
+    contract = json.loads((build / "toolchain/toolchain-example-lifecycle.json").read_text())
+    helper_input = build / "toolchain/toolchain-example-invalidation-inputs"
+    assert str(helper_input) in contract["legacy_inputs"]
+    helper_input.write_text(helper_input.read_text() + "changed helper fingerprint\n")
+    Path(contract["stamps"]["prune"]).unlink()
+    assert "refusing to prune incomplete" in make("toolchain-example-prune", expected=2)
+    assert "recovering changed installed inputs" in make()
+    assert run(str(installed)).strip() == "12"
+    assert source.exists() and binary.exists()
+    assert not json.loads(state.read_text())["pruned"]
 
     # A prior completion record cannot bless an interrupted install attempt.
     contract = json.loads((build / "toolchain/toolchain-example-lifecycle.json").read_text())
