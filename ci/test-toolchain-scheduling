@@ -55,4 +55,20 @@ with tempfile.TemporaryDirectory(prefix="toolchain scheduling with spaces ") as 
         assert "recovering changed installed inputs" in output, output
         assert not (root / "toolchain" / ("toolchain-" + project + "-installed-state.json")).exists()
 
-print("Launcher changes retain pruned filesystem tools; compiler changes still invalidate them.")
+    # CMake fixes command options in saved compiler-detection metadata. Remove
+    # only this fixture's metadata to compare distinct mandatory selections.
+    before_options = {path: json.loads(path.read_text())["identity"] for path in descriptors}
+    for language in ("C", "CXX"):
+        next((root / "CMakeFiles").glob("*/CMake" + language + "Compiler.cmake")).unlink()
+    run(*command, "-DCMAKE_C_COMPILER=" + str(compiler) + ";-DMANDATORY_HOST_C_OPTION=37",
+        "-DCMAKE_CXX_COMPILER=" + shutil.which("c++") + ";-DMANDATORY_HOST_CXX_OPTION=41")
+    assert all(json.loads(path.read_text())["identity"] != before_options[path] for path in descriptors)
+    # Different option values must differ too, even when executables are identical.
+    before_options = {path: json.loads(path.read_text())["identity"] for path in descriptors}
+    for language in ("C", "CXX"):
+        next((root / "CMakeFiles").glob("*/CMake" + language + "Compiler.cmake")).unlink()
+    run(*command, "-DCMAKE_C_COMPILER=" + str(compiler) + ";-DMANDATORY_HOST_C_OPTION=38",
+        "-DCMAKE_CXX_COMPILER=" + shutil.which("c++") + ";-DMANDATORY_HOST_CXX_OPTION=42")
+    assert all(json.loads(path.read_text())["identity"] != before_options[path] for path in descriptors)
+
+print("Launchers preserve caches; compiler selection and mandatory options remain semantic identity inputs.")

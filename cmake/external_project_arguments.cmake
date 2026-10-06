@@ -1,5 +1,19 @@
 include_guard(GLOBAL)
 
+# CMake normalizes compiler command options into COMPILER_ARG1. Forward them
+# only when present so ordinary compiler selections keep their cache identity.
+function(_reaveros_host_compiler_arguments _output)
+    set(_arguments "")
+    foreach (_language C CXX)
+        if (NOT "${CMAKE_${_language}_COMPILER_ARG1}" STREQUAL "")
+            string(REPLACE ";" "\\;" _argument
+                "-DCMAKE_${_language}_COMPILER_ARG1:STRING=${CMAKE_${_language}_COMPILER_ARG1}")
+            list(APPEND _arguments "${_argument}")
+        endif()
+    endforeach()
+    set(${_output} "${_arguments}" PARENT_SCOPE)
+endfunction()
+
 # ExternalProject serializes command arguments as CMake lists. Encode embedded
 # separators before that boundary, choosing a marker absent from all arguments
 # and the project's source/build paths. Literal pipes stay literal.

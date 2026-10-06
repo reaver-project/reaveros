@@ -3,6 +3,7 @@ _reaveros_ep_arguments(_thorn_args _thorn_separator
     "-DCMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
     "-DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}"
     "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
+    ${_reaveros_host_compiler_args}
     "-DCMAKE_C_COMPILER_LAUNCHER=${CMAKE_C_COMPILER_LAUNCHER}"
     "-DCMAKE_CXX_COMPILER_LAUNCHER=${CMAKE_CXX_COMPILER_LAUNCHER}"
     "-DCMAKE_PROJECT_INCLUDE=${REAVEROS_BINARY_DIR}/install/toolchain/files/project-policy.cmake"

@@ -8,8 +8,10 @@ foreach (_tool aclocal autoconf automake m4)
     file(CREATE_LINK "${REAVEROS_HOST_${_name}}" "${_autotools_path}/${_tool}" SYMBOLIC)
 endforeach()
 
-_reaveros_shell_command(_autotools_cc ${CMAKE_C_COMPILER_LAUNCHER} "${CMAKE_C_COMPILER}")
-_reaveros_shell_command(_autotools_cxx ${CMAKE_CXX_COMPILER_LAUNCHER} "${CMAKE_CXX_COMPILER}")
+separate_arguments(_cc_options NATIVE_COMMAND "${CMAKE_C_COMPILER_ARG1}")
+separate_arguments(_cxx_options NATIVE_COMMAND "${CMAKE_CXX_COMPILER_ARG1}")
+_reaveros_shell_command(_autotools_cc ${CMAKE_C_COMPILER_LAUNCHER} "${CMAKE_C_COMPILER}" ${_cc_options})
+_reaveros_shell_command(_autotools_cxx ${CMAKE_CXX_COMPILER_LAUNCHER} "${CMAKE_CXX_COMPILER}" ${_cxx_options})
 _reaveros_ep_arguments(_dosfstools_configure _dosfstools_separator
     "${CMAKE_CURRENT_SOURCE_DIR};${REAVEROS_BINARY_DIR};${GIT_EXECUTABLE}"
     "${CMAKE_COMMAND}" -E chdir <SOURCE_DIR>
@@ -40,6 +42,7 @@ ExternalProject_Add(toolchain-dosfstools
 # instead records the compiler and actual configure inputs.
 set_property(TARGET toolchain-dosfstools PROPERTY _REAVEROS_CONFIGURATION_INPUTS
     "CC=${CMAKE_C_COMPILER}" "CXX=${CMAKE_CXX_COMPILER}" "prefix=<INSTALL_DIR>"
+    ${_reaveros_host_compiler_args}
     "PATH=${_autotools_path}:$ENV{PATH}"
     "aclocal=${REAVEROS_HOST_ACLOCAL}" "autoconf=${REAVEROS_HOST_AUTOCONF}"
     "automake=${REAVEROS_HOST_AUTOMAKE}" "m4=${REAVEROS_HOST_M4}")
@@ -72,7 +75,8 @@ ExternalProject_Add(toolchain-mtools
     INSTALL_COMMAND $(MAKE) install
 )
 set_property(TARGET toolchain-mtools PROPERTY _REAVEROS_CONFIGURATION_INPUTS
-    "CC=${CMAKE_C_COMPILER}" "CXX=${CMAKE_CXX_COMPILER}" "prefix=<INSTALL_DIR>")
+    "CC=${CMAKE_C_COMPILER}" "CXX=${CMAKE_CXX_COMPILER}" "prefix=<INSTALL_DIR>"
+    ${_reaveros_host_compiler_args})
 reaveros_add_ep_prune_target(toolchain-mtools REQUIRED_INSTALLED_OUTPUTS bin/mcopy bin/mformat bin/mmd)
 reaveros_add_ep_source_identity_step(toolchain-mtools ${REAVEROS_MTOOLS_SHA256}
     DEPENDEES download update patch)

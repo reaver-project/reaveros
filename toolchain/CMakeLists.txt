@@ -35,6 +35,7 @@ add_custom_target(all-toolchain-prune)
 
 include(config.cmake)
 
+_reaveros_host_compiler_arguments(_reaveros_host_compiler_args)
 include(cmake.cmake)
 include(llvm.cmake)
 
