@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -114,5 +115,52 @@ with tempfile.TemporaryDirectory(prefix="child checks with spaces ", dir=root) a
             "-DCMAKE_CXX_FLAGS=-f-reaveros-unused-invalid-option")
         assert "compiler identification" not in output, output
         build(temporary / ("headers-" + mode))
+
+    # A linker script is not evidence that its runtime DSO is installed.
+    # Use the actual LLVM contract and copied runtimes, never damage the cache.
+    contract = json.loads((root / "toolchain/toolchain-llvm-lifecycle.json").read_text())
+    isolated = temporary / "runtime cache"
+    contract = json.loads(json.dumps(contract).replace(contract["root"], str(isolated)))
+    for directory in contract["directories"].values():
+        Path(directory).mkdir(parents=True, exist_ok=True)
+    runtime = next(Path(output).parent for output in contract["required_outputs"]
+        if Path(output).name == "libc++.so")
+    assert str(runtime / "libc++.so.1") in contract["required_outputs"]
+    actual_install = root / "install/toolchain/llvm"
+    install = isolated / "install/toolchain/llvm"
+    shutil.copytree(actual_install / runtime, install / runtime, symlinks=True)
+    for output in contract["required_outputs"]:
+        path = install / output
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.symlink_to(actual_install / output)
+    for dependency in contract["legacy_inputs"]:
+        source = root / Path(dependency).relative_to(isolated)
+        if source.exists():
+            Path(dependency).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, dependency)
+    for stamp in contract["stamps"].values():
+        Path(stamp).parent.mkdir(parents=True, exist_ok=True)
+        Path(stamp).touch()
+    descriptor = isolated / "toolchain/toolchain-llvm-lifecycle.json"
+    descriptor.write_text(json.dumps(contract))
+    helper = str(repository / "toolchain/installed-state")
+    for action in ("record", "prune"):
+        run(sys.executable, helper, action, str(descriptor))
+    library = install / runtime
+    link = [str(actual_install / "bin/ld.lld"), "-shared", "--no-as-needed",
+        "-L" + str(library), "-l:libc++.so", "-o", str(isolated / "probe.so")]
+    run(*link)
+    dso = (library / "libc++.so.1").resolve()
+    assert dso.parent == library.resolve(), "The copied SONAME must stay inside the copied runtime directory"
+    dso.unlink()
+    assert (library / "libc++.so").is_file()
+    assert "unable to find libc++.so.1" in run(*link, expected=1)
+    assert "refusing to prune incomplete" in run(sys.executable, helper, "prune", str(descriptor), expected=1)
+    assert "recovering missing installed outputs" in run(sys.executable, helper, "check", str(descriptor))
+    assert not (isolated / "toolchain/toolchain-llvm-installed-state.json").exists()
+    shutil.copyfile(actual_install / runtime / dso.name, dso)
+    run(*link)
+    print("Native runtime DSO loss fails pruning and enters recovery despite an intact linker script.", flush=True)
 
 print("Child CMake contracts passed with the installed patched tools.")

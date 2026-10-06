@@ -34,13 +34,15 @@ directories = {name: Path(value) for name, value in contract["directories"].item
 for name, path in expected.items():
     if directories[name].resolve() != path or directories[name].is_symlink():
         fail(f"refusing unexpected {name} directory for {project}: {directories[name]}")
+    directories[name] = path
 stamps = {name: Path(value) for name, value in contract["stamps"].items()}
 completed_steps = tuple(dict.fromkeys(("mkdir", "download", *contract["prune_order"], "done", "complete")))
 for name, path in stamps.items():
     expected_stamp = root / "toolchain/CMakeFiles" / (project + "-complete") if name == "complete" \
         else expected["stamp"] / (project + "-" + name)
-    if path != expected_stamp or path.is_symlink():
+    if path.resolve() != expected_stamp or path.is_symlink():
         fail(f"invalid {name} stamp for {project}")
+    stamps[name] = expected_stamp
 required = []
 for output in contract["required_outputs"]:
     path = Path(output)

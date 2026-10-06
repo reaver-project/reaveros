@@ -31,6 +31,13 @@ ExternalProject_Add(toolchain-dosfstools
     BUILD_COMMAND $(MAKE)
     INSTALL_COMMAND $(MAKE) install
 )
+# The executable recipe includes scheduling-only launchers; installation identity
+# instead records the compiler and actual configure inputs.
+set_property(TARGET toolchain-dosfstools PROPERTY _REAVEROS_CONFIGURATION_INPUTS
+    "CC=${CMAKE_C_COMPILER}" "CXX=${CMAKE_CXX_COMPILER}" "prefix=<INSTALL_DIR>"
+    "PATH=${_autotools_path}:$ENV{PATH}"
+    "aclocal=${REAVEROS_HOST_ACLOCAL}" "autoconf=${REAVEROS_HOST_AUTOCONF}"
+    "automake=${REAVEROS_HOST_AUTOMAKE}" "m4=${REAVEROS_HOST_M4}")
 reaveros_add_ep_prune_target(toolchain-dosfstools REQUIRED_INSTALLED_OUTPUTS sbin/mkfs.fat)
 reaveros_add_ep_fetch_tag_target(toolchain-dosfstools ${REAVEROS_DOSFSTOOLS_REVISION})
 reaveros_add_ep_source_identity_step(toolchain-dosfstools ${REAVEROS_DOSFSTOOLS_REVISION}
@@ -56,6 +63,8 @@ ExternalProject_Add(toolchain-mtools
     BUILD_COMMAND $(MAKE)
     INSTALL_COMMAND $(MAKE) install
 )
+set_property(TARGET toolchain-mtools PROPERTY _REAVEROS_CONFIGURATION_INPUTS
+    "CC=${CMAKE_C_COMPILER}" "CXX=${CMAKE_CXX_COMPILER}" "prefix=<INSTALL_DIR>")
 reaveros_add_ep_prune_target(toolchain-mtools REQUIRED_INSTALLED_OUTPUTS bin/mcopy bin/mformat bin/mmd)
 reaveros_add_ep_source_identity_step(toolchain-mtools ${REAVEROS_MTOOLS_SHA256}
     DEPENDEES download update patch)

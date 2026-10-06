@@ -164,7 +164,8 @@ foreach (_architecture IN LISTS REAVEROS_ARCHITECTURES)
         list(APPEND _required_llvm_outputs
             "include/c++/v1/cstddef"
             "include/${_reaveros_${_architecture}_tests_target}/c++/v1/__config_site")
-        foreach (_library libc++.so libc++abi.so libunwind.so)
+        # libc++.so is a linker script; its SONAME entry verifies the real DSO.
+        foreach (_library libc++.so libc++.so.1 libc++abi.so libunwind.so)
             list(APPEND _required_llvm_outputs "lib/${_reaveros_${_architecture}_tests_target}/${_library}")
         endforeach()
     endif()

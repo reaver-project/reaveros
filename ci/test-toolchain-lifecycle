@@ -184,4 +184,48 @@ with tempfile.TemporaryDirectory(prefix="toolchain state with spaces ") as tempo
     assert "conflicting operation" in output, output
     assert installed.exists()
 
-print("Toolchain contracts validate completion, legacy adoption, failures, pruned reuse, configuration/patch inputs, and missing outputs.")
+with tempfile.TemporaryDirectory(prefix="toolchain directory aliases ") as temporary:
+    root = Path(temporary)
+    archive = root / "package.tar"
+    with tarfile.open(archive, "w") as stream:
+        stream.add(fixture / "package", arcname="package")
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    patch = root / "patch"
+    patch.write_text("unchanged patch\n")
+    for kind in ("build", "ancestor"):
+        actual = root / (kind + " actual")
+        actual.mkdir()
+        alias = root / (kind + " alias")
+        alias.symlink_to(actual, target_is_directory=True)
+        build = alias if kind == "build" else alias / "build"
+        (build / "control").mkdir(parents=True)
+        command = ["cmake", "-S", str(fixture), "-B", str(build), "-G", "Unix Makefiles",
+            "-DTEST_REPOSITORY=" + str(repository), "-DTEST_ARCHIVE=" + str(archive),
+            "-DTEST_ARCHIVE_HASH=" + digest, "-DTEST_PATCH_INPUT=" + str(patch),
+            "-DTEST_VALUE=1", "-DTEST_JOBS=2"]
+        run(*command)
+        run("make", "-C", str(build), "-j4", "toolchain-example-install")
+        installed = build / "install/toolchain/example/bin/example"
+        assert run(str(installed)).strip() == "1"
+        timestamp = installed.stat().st_mtime_ns
+        run("make", "-C", str(build), "toolchain-example-prune")
+        run(*command)
+        assert "Performing " not in run("make", "-C", str(build), "toolchain-example-install")
+        assert installed.stat().st_mtime_ns == timestamp
+
+        # Accepting directory aliases must not permit a symlinked stamp file.
+        contract = json.loads((build / "toolchain/toolchain-example-lifecycle.json").read_text())
+        stamp = Path(contract["stamps"]["configure"])
+        saved = root / (kind + " saved stamp")
+        stamp.rename(saved)
+        stamp.symlink_to(saved)
+        output = run("make", "-C", str(build), "toolchain-example-install", expected=2)
+        assert "invalid configure stamp" in output, output
+        stamp.unlink()
+        saved.rename(stamp)
+        run(*command, "-DTEST_VALUE=2")
+        assert "recovering changed installed inputs" in run(
+            "make", "-C", str(build), "toolchain-example-install")
+        assert run(str(installed)).strip() == "2"
+
+print("Toolchain contracts validate completion, aliases, legacy adoption, failures, pruned reuse, configuration/patch inputs, and missing outputs.")
