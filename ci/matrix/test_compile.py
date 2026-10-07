@@ -18,9 +18,13 @@ class MatrixCompilerTests(unittest.TestCase):
         independent = result["standalone"]["include"]
         self.assertEqual(
             [group["name"] for group in independent],
-            ["Check build-system dependencies", "Unit tests"],
+            ["Test build system", "Unit tests"],
         )
         self.assertEqual(len(independent[0]["job_matrix"]["include"]), 1)
+        self.assertEqual(independent[0]["job_matrix"]["include"][0]["invoke"], "test-build-system")
+        entrypoints = {path.name for path in matrix_file.parent.iterdir()
+                      if path.is_file() and path.stat().st_mode & 0o111}
+        self.assertEqual(entrypoints, {job["invoke"] for job in self.matrix["jobs"].values()})
         unit_tests = independent[1]["job_matrix"]["include"]
         self.assertEqual(len(unit_tests), 2)
         self.assertEqual(

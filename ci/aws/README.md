@@ -87,8 +87,15 @@ pair. On a hit it copies the pair into per-run staging without provisioning an
 AWS builder. On a miss it frees unused hosted-runner disk space, pulls a
 compatible unpruned seed, and asks the existing build graph whether LLVM would
 be rebuilt. One medium or large AWS builder then prepares the image. Once it is
-ready, build-dependency checks, unit tests, image construction, and the boot
+ready, build-system tests, unit tests, image construction, and the boot
 smoke test remain separate jobs with independent reporting.
+
+Top-level `ci/` scripts are the matrix entry points; positional helpers live in
+`ci/helpers/`. `ci/test-build-system` runs the complete ordered suite from
+`ci/tests/build-system/` with the installed tools, including native fixtures,
+toolchain modes, installed-library contracts, cold component builds, kernel
+incrementality, and real image packaging. Matrix compiler tests remain in the
+hosted matrix-compilation job.
 
 The unit-test, image, and smoke jobs carry the `configuration` axis from
 `ci/matrix.yaml`. CI tests and builds both `debug` and `release` with explicit

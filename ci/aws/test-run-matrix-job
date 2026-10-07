@@ -5,7 +5,7 @@ set -euo pipefail
 if invalid_output=$(MATRIX_JOB='{"invoke":"../../unexpected"}' \
     ./ci/aws/run-matrix-job 2>&1)
 then
-    printf 'Matrix invocation accepted a path outside ci/jobs.\n' >&2
+    printf 'Matrix invocation accepted a path outside ci.\n' >&2
     exit 1
 fi
 if [[ ${invalid_output} != *'Invalid matrix job invocation'* ]]

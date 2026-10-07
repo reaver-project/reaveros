@@ -12,13 +12,26 @@ separate_arguments(_cc_options NATIVE_COMMAND "${CMAKE_C_COMPILER_ARG1}")
 separate_arguments(_cxx_options NATIVE_COMMAND "${CMAKE_CXX_COMPILER_ARG1}")
 _reaveros_shell_command(_autotools_cc ${CMAKE_C_COMPILER_LAUNCHER} "${CMAKE_C_COMPILER}" ${_cc_options})
 _reaveros_shell_command(_autotools_cxx ${CMAKE_CXX_COMPILER_LAUNCHER} "${CMAKE_CXX_COMPILER}" ${_cxx_options})
+foreach (_language cc cxx)
+    set(_wrapper "${CMAKE_CURRENT_BINARY_DIR}/host-${_language}")
+    file(CONFIGURE OUTPUT "${_wrapper}"
+        CONTENT "#!/bin/sh\nexec ${_autotools_${_language}} \"$@\"\n" @ONLY)
+    file(CHMOD "${_wrapper}" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
+        GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+endforeach()
+# Autoconf expands CC/CXX without reparsing embedded quotes. Keep its command
+# names simple; each wrapper preserves the compiler and launcher argv.
 _reaveros_ep_arguments(_dosfstools_configure _dosfstools_separator
     "${CMAKE_CURRENT_SOURCE_DIR};${REAVEROS_BINARY_DIR};${GIT_EXECUTABLE}"
     "${CMAKE_COMMAND}" -E chdir <SOURCE_DIR>
     "${CMAKE_COMMAND}" -E env "PATH=${_autotools_path}:$ENV{PATH}"
     <SOURCE_DIR>/autogen.sh
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${CMAKE_CURRENT_BINARY_DIR}/host-cc" <BINARY_DIR>/reaveros-cc
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${CMAKE_CURRENT_BINARY_DIR}/host-cxx" <BINARY_DIR>/reaveros-cxx
     COMMAND <SOURCE_DIR>/configure --prefix=<INSTALL_DIR>
-    "CC=${_autotools_cc}" "CXX=${_autotools_cxx}")
+    "CC=./reaveros-cc" "CXX=./reaveros-cxx")
 ExternalProject_Add(toolchain-dosfstools
     GIT_REPOSITORY ${REAVEROS_DOSFSTOOLS_REPO}
     GIT_TAG ${REAVEROS_DOSFSTOOLS_TAG}
@@ -55,8 +68,13 @@ reaveros_register_target(toolchain-dosfstools-install toolchain)
 
 _reaveros_ep_arguments(_mtools_configure _mtools_separator
     "${CMAKE_CURRENT_SOURCE_DIR};${REAVEROS_BINARY_DIR}"
+    "${CMAKE_COMMAND}" -E copy_if_different
+        "${CMAKE_CURRENT_BINARY_DIR}/host-cc" <BINARY_DIR>/reaveros-cc
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${CMAKE_CURRENT_BINARY_DIR}/host-cxx" <BINARY_DIR>/reaveros-cxx
+    COMMAND
     <SOURCE_DIR>/configure --prefix=<INSTALL_DIR>
-    "CC=${_autotools_cc}" "CXX=${_autotools_cxx}")
+    "CC=./reaveros-cc" "CXX=./reaveros-cxx")
 ExternalProject_Add(toolchain-mtools
     URL ${REAVEROS_MTOOLS_DIR}/${REAVEROS_MTOOLS_VER}
     URL_HASH SHA256=${REAVEROS_MTOOLS_SHA256}

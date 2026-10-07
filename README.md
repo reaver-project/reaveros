@@ -175,7 +175,7 @@ the UEFI bootloader for the amd64 architecture. With QEMU, OVMF, and access to
 `/dev/kvm`, the same four-CPU boot smoke used by CI can run it:
 
 ```bash
-./ci/smoke-test-uefi-amd64 build/install/images/uefi-efipart-amd64.img boot.log
+./ci/helpers/smoke-test-uefi-amd64 build/install/images/uefi-efipart-amd64.img boot.log
 ```
 
 Platform requirements:

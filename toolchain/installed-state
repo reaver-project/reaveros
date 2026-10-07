@@ -112,17 +112,64 @@ def clear_steps(steps):
     stamps["prune"].unlink(missing_ok=True)
 
 
+def compiler_cache_matches():
+    cache = directories["binary"] / "CMakeCache.txt"
+    compilers = contract.get("compilers", {})
+    if not cache.is_file() or not compilers:
+        return False
+    values = {line.split(":", 1)[0]: line.split("=", 1)[1]
+              for line in cache.read_text().splitlines()
+              if ":" in line and "=" in line and not line.startswith(("#", "//"))}
+    checked = False
+    for language, expected_compiler in compilers.items():
+        key = "CMAKE_" + language + "_COMPILER"
+        if key not in values:
+            continue
+        checked = True
+        if values[key] != expected_compiler["COMPILER"] \
+                or values.get(key + "_ARG1", "") != expected_compiler["COMPILER_ARG1"]:
+            return False
+        metadata = [path for path in (directories["binary"] / "CMakeFiles").glob("*/CMake" + language + "Compiler.cmake")
+                    if re.fullmatch(r"[0-9]+(?:\.[0-9]+)+", path.parent.name)]
+        if not metadata:
+            return False
+        latest = max(metadata, key=lambda path: tuple(int(part) for part in path.parent.name.split(".")))
+        version = re.search(r'set\(CMAKE_' + language + r'_COMPILER_VERSION "([^"]*)"\)', latest.read_text())
+        if not version or version[1] != expected_compiler["COMPILER_VERSION"]:
+            return False
+    return checked
+
+
+def refresh_compiler_metadata():
+    # CMake's saved compiler/system files can otherwise override new runtime
+    # processor or flag selections. Retain caches, generated rules, and objects.
+    for metadata in directories["binary"].rglob("*.cmake"):
+        if metadata.parent.parent.name == "CMakeFiles" \
+                and re.fullmatch(r"[0-9]+(?:\.[0-9]+)+", metadata.parent.name) \
+                and (metadata.name == "CMakeSystem.cmake"
+                     or re.fullmatch(r"CMake.*Compiler\.cmake", metadata.name)):
+            metadata.unlink()
+
+
 def recover(state, missing):
     previous = state.get("identity", {}) if state else {}
     changed = (previous != contract["identity"] or not inputs_match(state)) if state else not legacy_matches()
     restore = not populated("source") or not populated("binary")
     if changed:
-        for name in ("binary", "install"):
+        source_identity = root / "toolchain" / (project + "-source-identity")
+        previous_source = previous.get("source") if state else \
+            source_identity.read_text().strip() if source_identity.exists() else None
+        same_source = previous_source == contract["identity"]["source"]
+        incremental = same_source and not restore and compiler_cache_matches()
+        if incremental:
+            refresh_compiler_metadata()
+            print(f"{project}: retaining configured build tree for incremental recovery", flush=True)
+        for name in (("install",) if incremental else ("binary", "install")):
             if directories[name].exists():
                 shutil.rmtree(directories[name])
         directories["binary"].mkdir(parents=True, exist_ok=True)
         directories["install"].mkdir(parents=True, exist_ok=True)
-        if not state or previous.get("source") != contract["identity"]["source"]:
+        if not same_source:
             restore = True
         elif not restore:
             clear_steps(["apply-patches", "invalidate-build", "configure", "build", "install"])

@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+repo_root=$(git -C "${self_dir}" rev-parse --show-toplevel)
+test_directory=$(mktemp -d)
+trap 'rm -rf "${test_directory}"' EXIT
+hydrator="${repo_root}/toolchain/hydrate-git-archive"
+repository="file://${test_directory}/remote"
+
+git init --bare --quiet "${test_directory}/remote"
+git -C "${test_directory}/remote" config uploadpack.allowFilter true
+git init --quiet "${test_directory}/upstream"
+git -C "${test_directory}/upstream" remote add origin "${repository}"
+
+commit_source()
+{
+    message=$1
+    printf '%s\n' "${message}" > "${test_directory}/upstream/source"
+    git -C "${test_directory}/upstream" add source
+    git -C "${test_directory}/upstream" \
+        -c commit.gpgsign=false -c core.hooksPath=/dev/null \
+        -c user.name=test -c user.email=test@example.invalid \
+        commit --quiet -m "${message}"
+    git -C "${test_directory}/upstream" \
+        -c tag.gpgSign=false -c user.name=test -c user.email=test@example.invalid \
+        tag -a -m "${message}" "${message}"
+    git -C "${test_directory}/upstream" push --quiet origin HEAD "refs/tags/${message}"
+    git -C "${test_directory}/upstream" archive --format=tar \
+        --prefix="sample-${message}/" "${message}" \
+        > "${test_directory}/${message}.tar"
+}
+
+commit_source first
+first_revision=$(git -C "${test_directory}/upstream" rev-parse HEAD)
+mkdir "${test_directory}/checkout"
+bash "${hydrator}" "${test_directory}/checkout" "${repository}" \
+    first "${first_revision}" "${test_directory}/first.tar"
+if [[ ! -d ${test_directory}/checkout/.git \
+    || $(git -C "${test_directory}/checkout" status --porcelain) != "" \
+    || $(< "${test_directory}/checkout/source") != first ]]
+then
+    printf 'The archive was not hydrated into a clean Git checkout.\n' >&2
+    exit 1
+fi
+
+git -C "${test_directory}/checkout" remote set-url origin file:///nonexistent
+printf 'modified\n' > "${test_directory}/checkout/source"
+bash "${hydrator}" "${test_directory}/checkout" file:///nonexistent \
+    first "${first_revision}" "${test_directory}/first.tar"
+if [[ $(< "${test_directory}/checkout/source") != first ]]
+then
+    printf 'Restoring the same revision unexpectedly required a remote fetch.\n' >&2
+    exit 1
+fi
+
+git clone --quiet --branch first "${repository}" "${test_directory}/old-style-checkout"
+printf 'modified\n' > "${test_directory}/old-style-checkout/source"
+bash "${hydrator}" "${test_directory}/old-style-checkout" "${repository}" \
+    first "${first_revision}" "${test_directory}/first.tar"
+if [[ $(git -C "${test_directory}/old-style-checkout" status --porcelain) != "" ]]
+then
+    printf 'An existing full checkout could not be hydrated from the archive.\n' >&2
+    exit 1
+fi
+
+commit_source second
+second_revision=$(git -C "${test_directory}/upstream" rev-parse HEAD)
+git -C "${test_directory}/checkout" remote set-url origin "${repository}"
+bash "${hydrator}" "${test_directory}/checkout" "${repository}" \
+    second "${second_revision}" "${test_directory}/second.tar"
+if [[ $(git -C "${test_directory}/checkout" rev-parse HEAD) != "${second_revision}" \
+    || $(git -C "${test_directory}/checkout" status --porcelain) != "" \
+    || $(< "${test_directory}/checkout/source") != second ]]
+then
+    printf 'A new release did not update the Git checkout and source contents.\n' >&2
+    exit 1
+fi
+
+bash "${hydrator}" "${test_directory}/old-style-checkout" "${repository}" \
+    second "${second_revision}" "${test_directory}/second.tar"
+if [[ $(git -C "${test_directory}/old-style-checkout" rev-parse HEAD) != "${second_revision}" \
+    || $(git -C "${test_directory}/old-style-checkout" status --porcelain) != "" ]]
+then
+    printf 'An existing full checkout could not advance to a new release.\n' >&2
+    exit 1
+fi
+
+metadata_path=clang/bindings/python/.git_archival.txt
+mkdir -p "${test_directory}/upstream/clang/bindings/python"
+printf '%s\n' "${metadata_path} export-subst" \
+    > "${test_directory}/upstream/.gitattributes"
+printf '%s\n' \
+    'node: $Format:%H$' \
+    'node-date: $Format:%cI$' \
+    'describe-name: $Format:%(describe:tags=true,match=llvmorg-*[0-9]*)$' \
+    > "${test_directory}/upstream/${metadata_path}"
+git -C "${test_directory}/upstream" add .gitattributes "${metadata_path}"
+commit_source llvmorg-23.1.2
+release_revision=$(git -C "${test_directory}/upstream" rev-parse HEAD)
+release_archive="${test_directory}/llvmorg-23.1.2.tar"
+archived_metadata=$(tar -xOf "${release_archive}" \
+    "sample-llvmorg-23.1.2/${metadata_path}")
+if [[ ${archived_metadata} != *"node: ${release_revision}"* ]]
+then
+    printf 'The fixture archive did not expand Git metadata.\n' >&2
+    exit 1
+fi
+bash "${hydrator}" "${test_directory}/checkout" "${repository}" \
+    llvmorg-23.1.2 "${release_revision}" "${release_archive}"
+if [[ -n $(git -C "${test_directory}/checkout" status --porcelain --ignored --untracked-files=all) ]]
+then
+    printf 'An expected export-subst expansion left the checkout dirty.\n' >&2
+    exit 1
+fi
+
+mkdir -p "${test_directory}/tampered"
+tar -xf "${release_archive}" -C "${test_directory}/tampered"
+printf 'node: tampered\n' \
+    > "${test_directory}/tampered/sample-llvmorg-23.1.2/${metadata_path}"
+tar -cf "${test_directory}/tampered.tar" -C "${test_directory}/tampered" \
+    sample-llvmorg-23.1.2
+if bash "${hydrator}" "${test_directory}/incorrect-metadata" "${repository}" \
+    llvmorg-23.1.2 "${release_revision}" "${test_directory}/tampered.tar" \
+    > /dev/null 2>&1
+then
+    printf 'A tampered export-subst expansion was accepted.\n' >&2
+    exit 1
+fi
+
+if bash "${hydrator}" "${test_directory}/incorrect" "${repository}" \
+    second "${second_revision}" "${test_directory}/first.tar" > /dev/null 2>&1
+then
+    printf 'An archive that differs from the pinned Git revision was accepted.\n' >&2
+    exit 1
+fi
+
+printf 'Toolchain Git archive tests passed.\n'

@@ -2,40 +2,20 @@
 
 set -euo pipefail
 
-if [[ $# -lt 2 || $# -gt 3 ]]
+if [[ $# -ne 1 || -z ${BUILD_ENVIRONMENT_IMAGE:-} ]]
 then
-    printf 'usage: %s <architecture> <build-environment image> [configuration]\n' "$0" >&2
+    printf 'usage: %s <compiled job> (with BUILD_ENVIRONMENT_IMAGE)\n' "$0" >&2
     exit 2
 fi
 
-architecture=$1
-build_environment=$2
-configuration=${3:-}
-repo_root=$(git rev-parse --show-toplevel)
-
-case $(uname -m) in
-    x86_64) host_architecture=amd64 ;;
-    aarch64) host_architecture=aarch64 ;;
-    *) host_architecture=unsupported ;;
+architecture=$(jq --exit-status --raw-output '.tags.architecture' <<< "$1")
+configuration=$(jq --exit-status --raw-output '.tags.configuration' <<< "$1")
+case "${configuration}" in
+    debug) configuration=Debug ;;
+    release) configuration=Release ;;
+    *)
+        printf 'Unsupported unit-test configuration: %s.\n' "${configuration}" >&2
+        exit 2
+        ;;
 esac
-if [[ ${architecture} != "${host_architecture}" ]]
-then
-    printf 'Cannot execute %s unit tests on a %s host.\n' \
-        "${architecture}" "${host_architecture}" >&2
-    exit 2
-fi
-
-docker run --rm \
-    --volume "${repo_root}:/reaveros:ro" \
-    "${build_environment}" \
-    /usr/bin/env bash -c '
-        set -euo pipefail
-        architecture=$1
-        configuration=$2
-        cd /build
-        cmake /reaveros -DREAVEROS_ENABLE_UNIT_TESTS=ON \
-            -DREAVEROS_ARCHITECTURES="${architecture}" \
-            -DCMAKE_BUILD_TYPE="${configuration}"
-        make "all-${architecture}-build-tests" -j"$(nproc)"
-        install/toolchain/cmake/bin/ctest --output-on-failure -j"$(nproc)"
-    ' -- "${architecture}" "${configuration}"
+exec ./ci/helpers/run-unit-tests "${architecture}" "${BUILD_ENVIRONMENT_IMAGE}" "${configuration}"

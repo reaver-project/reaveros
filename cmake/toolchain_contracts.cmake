@@ -44,6 +44,17 @@ function(_reaveros_finalize_toolchain_lifecycles)
         _reaveros_ep_configuration_identity(_configuration "${_project}")
         _reaveros_json_string(_value "${_configuration}")
         string(JSON _contract SET "${_contract}" identity configuration "${_value}")
+        # Compiler selections also determine whether a configured CMake build
+        # tree can be reused safely when other configuration inputs change.
+        string(JSON _contract SET "${_contract}" compilers "{}")
+        foreach (_language C CXX)
+            set(_compiler "{}")
+            foreach (_field COMPILER COMPILER_ARG1 COMPILER_VERSION)
+                _reaveros_json_string(_value "${CMAKE_${_language}_${_field}}")
+                string(JSON _compiler SET "${_compiler}" ${_field} "${_value}")
+            endforeach()
+            string(JSON _contract SET "${_contract}" compilers ${_language} "${_compiler}")
+        endforeach()
         string(JSON _contract SET "${_contract}" legacy_inputs
             "${REAVEROS_BINARY_DIR}/toolchain/${_project}-source-inputs" "\"invalidate-build\"")
         foreach (_input tag invalidation)

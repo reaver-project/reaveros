@@ -1,0 +1,60 @@
+#!/usr/bin/env python3
+
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+import time
+
+
+repository = Path(__file__).resolve().parents[3]
+with tempfile.TemporaryDirectory(prefix="lifecycle guard with spaces ") as temporary:
+    root = Path(temporary)
+    subprocess.run(["cmake", "-S", str(repository / "ci/tests/build-system/fixtures/lifecycle-guard"),
+        "-B", str(root), "-G", "Unix Makefiles", "-DTEST_REPOSITORY=" + str(repository)], check=True,
+        stdout=subprocess.DEVNULL)
+    output = root / "build-output"
+    with output.open("w") as stream:
+        build = subprocess.Popen(["make", "-C", str(root), "-j4", "one-build"], stdout=stream, stderr=stream)
+        try:
+            deadline = time.monotonic() + 10
+            while not (root / "one-build-entered").exists():
+                assert build.poll() is None, output.read_text()
+                assert time.monotonic() < deadline, output.read_text()
+                time.sleep(0.02)
+            for operation in ("build", "prune"):
+                result = subprocess.run(["make", "-C", str(root), "-j4", "one-" + operation],
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                assert result.returncode and "conflicting operation" in result.stdout, result.stdout
+            subprocess.run(["make", "-C", str(root), "two-prune"], check=True, stdout=subprocess.DEVNULL)
+            (root / "one-release").touch()
+            assert build.wait(timeout=10) == 0, output.read_text()
+        finally:
+            if build.poll() is None:
+                build.kill()
+                build.wait()
+    # The owning Make exit releases the project even though the record remains.
+    deadline = time.monotonic() + 5
+    while True:
+        result = subprocess.run(["make", "-C", str(root), "one-prune"],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        if result.returncode == 0:
+            break
+        assert "conflicting operation" in result.stdout and time.monotonic() < deadline, result.stdout
+        time.sleep(0.02)
+
+with tempfile.TemporaryDirectory(prefix="selected-gnu-make-") as temporary:
+    directory = Path(temporary)
+    for kind in ("alias", "copy"):
+        make = directory / ("selected-executable-" + kind)
+        if kind == "alias":
+            make.symlink_to(shutil.which("make"))
+        else:
+            shutil.copy2(shutil.which("make"), make)
+        root = directory / (kind + " build with spaces")
+        subprocess.run(["cmake", "-S", str(repository / "ci/tests/build-system/fixtures/lifecycle-guard"),
+            "-B", str(root), "-G", "Unix Makefiles", "-DTEST_REPOSITORY=" + str(repository),
+            "-DCMAKE_MAKE_PROGRAM=" + str(make)], check=True, stdout=subprocess.DEVNULL)
+        subprocess.run([str(make), "-C", str(root), "one-prune"], check=True, stdout=subprocess.DEVNULL)
+
+print("Project leases honor selected Make executables, reject conflicts, allow independent projects, and release on Make exit.")

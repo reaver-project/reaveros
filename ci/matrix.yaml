@@ -12,9 +12,9 @@ artifacts:
   serial: {file: serial.log, on_failure: true}
 
 jobs:
-  build-dependencies:
-    name: Check build-system dependencies
-    invoke: check-build-dependencies
+  build-system:
+    name: Test build system
+    invoke: test-build-system
     axes: [architecture]
     phase: standalone
     runner_class: validation-medium
@@ -47,5 +47,5 @@ jobs:
 workflows:
   ci:
     # Each line is a submatrix: jobs selects job types, and tag lists are axes.
-    - {jobs: [build-dependencies, unit-tests], architecture: [amd64], configuration: [debug, release]}
+    - {jobs: [build-system, unit-tests], architecture: [amd64], configuration: [debug, release]}
     - {jobs: [image, smoke], architecture: [amd64], loader: [uefi], layout: [efipart], configuration: [debug, release], firmware: [ovmf], machine: [q35]}

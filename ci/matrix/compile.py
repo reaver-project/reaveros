@@ -315,7 +315,7 @@ def main():
         result = compile_matrix(
             document,
             args.workflow,
-            pathlib.Path(__file__).resolve().parents[1] / "jobs",
+            pathlib.Path(__file__).resolve().parents[1],
         )
     except (OSError, yaml.YAMLError, MatrixError) as error:
         print(f"Invalid CI matrix: {error}", file=sys.stderr)

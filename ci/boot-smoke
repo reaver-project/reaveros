@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $# -ne 1 ]]
+then
+    printf 'usage: %s <compiled job>\n' "$0" >&2
+    exit 2
+fi
+
+coordinates=$(jq --exit-status --raw-output '
+    [.tags.architecture, .tags.loader, .tags.layout, .tags.firmware, .tags.machine] | @tsv
+' <<< "$1")
+if [[ ${coordinates} != $'amd64\tuefi\tefipart\tovmf\tq35' ]]
+then
+    printf 'No boot-smoke implementation for %s.\n' "${coordinates}" >&2
+    exit 2
+fi
+
+./ci/helpers/smoke-test-uefi-amd64 artifacts/image.img artifacts/serial.log

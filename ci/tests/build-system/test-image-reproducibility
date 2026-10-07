@@ -1,0 +1,162 @@
+#!/usr/bin/env python3
+
+import hashlib
+import os
+from pathlib import Path
+import shutil
+import stat
+import struct
+import subprocess
+import sys
+import tempfile
+
+
+if len(sys.argv) != 2:
+    sys.exit("usage: test-image-reproducibility <installed toolchain directory>")
+repository = Path(__file__).resolve().parents[3]
+toolchain = Path(sys.argv[1]).resolve()
+python = sys.executable
+find, cpio, fallocate = (shutil.which(tool) for tool in ("find", "cpio", "fallocate"))
+mkfs = str(toolchain / "dosfstools/sbin/mkfs.fat")
+mmd, mcopy = (str(toolchain / "mtools/bin" / tool) for tool in ("mmd", "mcopy"))
+epoch = 315532800
+
+
+def run(*command, env, user=None, umask=0o022, succeeds=True):
+    result = subprocess.run(command, env=env, user=user, umask=umask,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    assert (result.returncode == 0) == succeeds, result.stdout
+    return result.stdout
+
+
+def archive_entries(data):
+    entries = []
+    offset = 0
+    while True:
+        assert data[offset:offset + 6] == b"070701"
+        values = [int(data[offset + 6 + index * 8:offset + 14 + index * 8], 16) for index in range(13)]
+        name = data[offset + 110:offset + 109 + values[11]]
+        offset = (offset + 110 + values[11] + 3) & ~3
+        contents = data[offset:offset + values[6]]
+        offset = (offset + values[6] + 3) & ~3
+        if name == b"TRAILER!!!":
+            return entries
+        entries.append((name, values, contents))
+
+
+with tempfile.TemporaryDirectory(prefix="image reproducibility with 'quotes' $dollars ") as temporary:
+    root = Path(temporary)
+    root.chmod(0o755)
+    hostile_config = root / "hostile mtools.conf"
+    hostile_config.write_text("mtools_no_vfat=1\nmtools_lower_case=1\ndefault_codepage=437\n")
+    results = []
+    user_ownership_tested = False
+    device_tested = False
+
+    def variant(parent, name, reverse, user=None):
+        directory = parent / name
+        directory.mkdir()
+        services = directory / "services"
+        services.mkdir()
+        contents = {
+            "system/logger.srv": b"same service\n",
+            "system/another 'quoted' $name\n.srv": b"same other service\n",
+            "system/executable.srv": b"executable service\n",
+        }
+        for relative in sorted(contents, reverse=reverse):
+            path = services / relative
+            path.parent.mkdir(exist_ok=True)
+            path.write_bytes(contents[relative])
+            path.chmod((0o700 if reverse else 0o751) if "executable" in relative else (0o600 if reverse else 0o664))
+        (services / "empty directory").mkdir()
+        (services / "system/symlink.srv").symlink_to("logger.srv")
+        runtime = directory / "librosestd.so"
+        runtime.write_bytes(b"same runtime\n")
+        fat_stage = directory / "fat stage"
+        fat_stage.mkdir()
+        fat_inputs = {
+            "EFI/BOOT/BOOTX64.EFI": b"same loader\n",
+            "EFI/BOOT/reaveros.conf": b"same configuration\n",
+            "reaver/kernel.img": b"same kernel\n",
+        }
+        for relative in sorted(fat_inputs, reverse=reverse):
+            path = fat_stage / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(fat_inputs[relative])
+        for path in (directory, *directory.rglob("*")):
+            os.utime(path, (1 if reverse else 1700000123, 1 if reverse else 1700000123), follow_symlinks=False)
+            if path.is_dir():
+                path.chmod(0o700 if reverse else 0o755)
+            if user is not None:
+                os.chown(path, user, user, follow_symlinks=False)
+        env = dict(os.environ, SOURCE_DATE_EPOCH=str(epoch), TZ="Pacific/Honolulu" if reverse else "Europe/Warsaw",
+            LC_ALL="C" if reverse else "C.UTF-8", MTOOLSRC=str(hostile_config), MTOOLS_NO_VFAT="1",
+            MTOOLS_LOWER_CASE="1", DEFAULT_CODEPAGE="437")
+        initrd = directory / "initrd.img"
+        staging = directory / "initrd staging"
+        initrd_command = [python, str(repository / "images/create-initrd"), str(services), str(runtime),
+            str(staging), str(initrd), find, cpio]
+        run(*initrd_command, env=env, user=user, umask=0o077 if reverse else 0o022)
+        archive = initrd.read_bytes()
+        entries = archive_entries(archive)
+        names = [name for name, values, contents in entries]
+        assert names == sorted(names), names
+        for entry_name, values, payload in entries:
+            assert values[2:4] == [0, 0] and values[5] == epoch, (entry_name, values)
+            assert values[7:11] == [0, 0, 0, 0], (entry_name, values)
+            mode = values[1]
+            expected = 0o755 if stat.S_ISDIR(mode) or entry_name.endswith(b"executable.srv") else 0o644
+            if stat.S_ISLNK(mode):
+                assert payload == b"logger.srv", (entry_name, payload)
+                expected = 0o777
+            assert stat.S_IMODE(mode) == expected, (entry_name, oct(mode))
+        default_env = dict(env)
+        default_env.pop("SOURCE_DATE_EPOCH")
+        run(*initrd_command, env=default_env, user=user)
+        assert initrd.read_bytes() == archive
+        shutil.copyfile(initrd, fat_stage / "reaver/initrd.img")
+        if user is not None:
+            os.chown(fat_stage / "reaver/initrd.img", user, user)
+        image = directory / "fat.img"
+        command = [python, str(repository / "images/create-uefi-image"), str(fat_stage), str(image),
+            "1474560", "512", fallocate, mkfs, mmd, mcopy]
+        run(*command, env=env, user=user, umask=0o077 if reverse else 0o022)
+        data = image.read_bytes()
+        def cluster_bytes(cluster):
+            return data[16896 + (cluster - 2) * 512:16896 + (cluster - 1) * 512]
+        efi = cluster_bytes(2)
+        boot = next(struct.unpack_from("<H", efi, offset + 26)[0]
+            for offset in range(0, 512, 32) if efi[offset:offset + 11] == b"BOOT       ")
+        boot_entries = cluster_bytes(boot)
+        assert boot_entries[64:75] == b"BOOTX64 EFI", boot_entries[:96]
+        date = 1 << 5 | 1  # 1980-01-01, midnight UTC
+        for offset in (0, 32, 64):
+            assert struct.unpack_from("<HH", boot_entries, offset + 22) == (0, date)
+        run(*command, env=dict(env, TZ="UTC", LC_ALL="C"), user=user)
+        assert image.read_bytes() == data
+        run(*command, env=default_env, user=user)
+        assert image.read_bytes() == data
+        for bad_epoch in ("", "yesterday", "315532799", "4294967296", "-1"):
+            output = run(*command, env=dict(env, SOURCE_DATE_EPOCH=bad_epoch), user=user, succeeds=False)
+            assert "SOURCE_DATE_EPOCH" in output and image.read_bytes() == data, output
+            output = run(*initrd_command, env=dict(env, SOURCE_DATE_EPOCH=bad_epoch), user=user, succeeds=False)
+            assert "SOURCE_DATE_EPOCH" in output and initrd.read_bytes() == archive, output
+        run(*command, env=dict(env, SOURCE_DATE_EPOCH=str(epoch + 2)), user=user)
+        assert image.read_bytes() != data
+        (fat_stage / "reaver/kernel.img").write_bytes(b"changed kernel\n")
+        run(*command, env=env, user=user)
+        assert image.read_bytes() != data
+        assert image.read_bytes()[39:43] != data[39:43], "payload change did not change the volume identity"
+        print(name, "initrd", hashlib.sha256(archive).hexdigest(), "FAT", hashlib.sha256(data).hexdigest(), flush=True)
+        return archive, data, staging.stat().st_dev
+
+    results.append(variant(root, "first", False))
+    results.append(variant(root, "second", True, 1001 if os.geteuid() == 0 else None))
+    user_ownership_tested = os.geteuid() == 0
+    if Path("/dev/shm").is_dir() and os.access("/dev/shm", os.W_OK):
+        with tempfile.TemporaryDirectory(prefix="image reproducibility ", dir="/dev/shm") as ram:
+            results.append(variant(Path(ram), "other filesystem", True))
+            device_tested = results[-1][2] != results[0][2]
+    assert all(archive == results[0][0] and data == results[0][1] for archive, data, device in results)
+    print("Image bytes match across locations, traversal order, timestamps, permissions, locale/timezone and hostile mtools settings.")
+    print("Different builder UID:", user_ownership_tested, "different staging device:", device_tested)

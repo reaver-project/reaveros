@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+
+
+directory = Path(__file__).resolve().parent
+repository = directory.parents[2]
+if len(sys.argv) == 2 and sys.argv[1] == '--fixtures-only':
+    root = None
+    architecture = None
+elif len(sys.argv) == 3:
+    root = Path(sys.argv[1]).resolve()
+    architecture = sys.argv[2]
+else:
+    sys.exit('usage: run <configured superbuild> <architecture> | --fixtures-only')
+
+fixtures = (
+    'build-image', 'cache-launcher', 'build-selection', 'component-registration',
+    'external-project-arguments', 'native-tests', 'lifecycle-guard', 'toolchain-lifecycle',
+    'toolchain-scheduling', 'helper-contracts', 'host-tools', 'images', 'component-install',
+    'install-transfer', 'build-dependencies', 'llvm-builtins', 'incbin-generation',
+    'toolchain-git-tag', 'toolchain-failure-recovery', 'toolchain-helper-inputs',
+    'toolchain-git-archive', 'prune-stamps',
+)
+installed = ('toolchain-modes', 'child-cmake', 'kernel-components', 'image-reproducibility')
+expected = {'test-' + name for name in (*fixtures, *installed)}
+expected.add('test-toolchain-patch-dependencies.cmake')
+actual = {path.name for path in directory.glob('test-*') if path.is_file()}
+if actual != expected:
+    sys.exit('Build-system suite coverage mismatch: unlisted=' + str(sorted(actual - expected))
+        + ', missing=' + str(sorted(expected - actual)))
+
+
+def run(*command):
+    print('Running ' + Path(command[0]).name, flush=True)
+    subprocess.run(command, cwd=repository, check=True)
+
+
+run(str(directory / 'test-build-image'))
+for name in ('test-build-image', 'test-prune-image', 'test-update-images',
+             'test-verify-build-environment-packages', 'test-compiler-cache-options',
+             'test-build-toolchain-probe', 'test-update-images-probe'):
+    run(str(repository / 'docker' / name))
+for name in ('test-push-images', 'test-strip-ecr-registry'):
+    run(str(repository / 'ci/aws' / name))
+for name in fixtures[1:]:
+    run(str(directory / ('test-' + name)))
+with tempfile.TemporaryDirectory(prefix='build-system patch dependencies ') as temporary:
+    run('cmake', '-DTEST_DIRECTORY=' + temporary, '-P',
+        str(directory / 'test-toolchain-patch-dependencies.cmake'))
+
+if root is not None:
+    for name in ('toolchain-modes', 'child-cmake'):
+        run(str(directory / ('test-' + name)), str(root))
+    run(str(directory / 'check-component-dependencies'), architecture, str(repository), str(root))
+    run(str(directory / 'test-kernel-components'), str(root))
+    tools = str(root / 'install/toolchain')
+    run(str(directory / 'test-images'), tools)
+    run(str(directory / 'test-image-reproducibility'), tools)
+    print('Complete build-system suite passed.', flush=True)
+else:
+    print('Build-system fixture suite passed.', flush=True)

@@ -55,14 +55,14 @@ Two platform adaptations remain intentional:
 - Native C executables link with the C++ driver to select the supplied C++
   runtime. C/C++ compilation and native C++ linking use standard CMake rules.
 
-`ci/test-toolchain-modes <configured superbuild>` checks all four modes with the
+`ci/tests/build-system/test-toolchain-modes <configured superbuild>` checks all four modes with the
 installed patched tools. It covers caller/environment/configuration flags,
 launchers, reuse, lookup, object ABI/formats, native runtime linkage, minimum
 standards, and rejection of invalid compiler options. Cold component builds in
-`ci/check-build-dependencies` run this check before rebuilding OS and test
+`ci/test-build-system` runs this check before rebuilding OS and test
 components using their declared prerequisites.
 
-`ci/test-child-cmake <configured superbuild>` checks actual independent producer
+`ci/tests/build-system/test-child-cmake <configured superbuild>` checks actual independent producer
 and consumer builds with installed archives: changed libraries relink without
 recompilation, changed headers recompile, unchanged/reconfigured builds stay
 unchanged, deleted archives can be restored, and whole-archive state is bounded.
