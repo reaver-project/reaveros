@@ -87,12 +87,15 @@ index e606cdc4c..ab697d594 100644
  #include "ToolChains/PPCFreeBSD.h"
  #include "ToolChains/PPCLinux.h"
  #include "ToolChains/PS4CPU.h"
-@@ -6978,3 +6979,5 @@ std::string Driver::GetStdModuleManifestPath(const Compilation &C,
+@@ -6977,6 +6978,8 @@ std::string Driver::GetStdModuleManifestPath(const Compilation &C,
+ 
      return evaluate("libstdc++.a").value_or(error);
    }
 +  case ToolChain::CST_Rosestd:
 +    return error;
    }
+ 
+   return error;
 @@ -7158,6 +7161,9 @@ const ToolChain &Driver::getToolChain(const ArgList &Args,
        else
          TC = std::make_unique<toolchains::Linux>(*this, Target, Args);
@@ -608,10 +611,10 @@ index deca04852..923021f9e 100644
    if(APPLE OR CYGWIN OR "${CMAKE_SYSTEM_NAME}" MATCHES "AIX")
      set(LLVM_HAVE_LINK_VERSION_SCRIPT 0)
 diff --git a/llvm/include/llvm/TargetParser/Triple.h b/llvm/include/llvm/TargetParser/Triple.h
-index d819c4975..5c5162f16 100644
+index c5af23252..3b37bf688 100644
 --- a/llvm/include/llvm/TargetParser/Triple.h
 +++ b/llvm/include/llvm/TargetParser/Triple.h
-@@ -310,6 +310,7 @@ public:
+@@ -312,6 +312,7 @@ public:
      Managarm,
      NetBSD,
      OpenBSD,
@@ -619,7 +622,7 @@ index d819c4975..5c5162f16 100644
      Solaris,
      UEFI,
      Win32,
-@@ -746,6 +747,10 @@ public:
+@@ -748,6 +749,10 @@ public:
  
    bool isOSFuchsia() const { return getOS() == Triple::Fuchsia; }
  
@@ -658,10 +661,10 @@ index 6cfea5645..05dd8ece4 100644
    bool isLFI() const { return TargetTriple.isLFI(); }
  
 diff --git a/llvm/lib/TargetParser/Triple.cpp b/llvm/lib/TargetParser/Triple.cpp
-index 356782c1f..df32012e7 100644
+index 2e4fe7ce7..e69847ece 100644
 --- a/llvm/lib/TargetParser/Triple.cpp
 +++ b/llvm/lib/TargetParser/Triple.cpp
-@@ -435,6 +435,8 @@ StringRef Triple::getOSTypeName(OSType Kind) {
+@@ -437,6 +437,8 @@ StringRef Triple::getOSTypeName(OSType Kind) {
    switch (Kind) {
    case UnknownOS:
      return "unknown";
@@ -670,7 +673,7 @@ index 356782c1f..df32012e7 100644
  #define TRIPLE_OS(Enum, Name)                                                  \
    case Enum:                                                                   \
      return Name;
-@@ -746,6 +748,7 @@ static Triple::VendorType parseVendor(StringRef VendorName) {
+@@ -749,6 +751,7 @@ static Triple::VendorType parseVendor(StringRef VendorName) {
  
  static Triple::OSType parseOS(StringRef OSName) {
    return StringSwitch<Triple::OSType>(OSName)
