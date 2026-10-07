@@ -3,10 +3,33 @@
 set -euo pipefail
 
 case $(basename -- "$0") in
+    installed-state)
+        [[ $1 == probe ]]
+        if [[ -f ${TEST_PREPARED_FILE} && ${TEST_RECOVERY_AFTER_PREPARE:-false} == true ]]
+        then
+            printf 'build\n'
+        else
+            printf '%s\n' "${TEST_LLVM_RECOVERY}"
+        fi
+        exit 0
+        ;;
+    prepare-build-environment)
+        touch "${TEST_PREPARED_FILE}"
+        exit 0
+        ;;
+    verify-build-environment-packages)
+        [[ -f ${TEST_BUILT_FILE} ]]
+        exit 0
+        ;;
     cmake)
         exit 0
         ;;
     make)
+        if [[ $1 == all-toolchain ]]
+        then
+            touch "${TEST_BUILT_FILE}"
+            exit 0
+        fi
         [[ $1 == --dry-run && $2 == --no-print-directory ]]
         case $3 in
             all-toolchain) ;;
@@ -28,16 +51,24 @@ esac
 self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 test_directory=$(mktemp -d)
 trap 'rm -r -- "${test_directory}"' EXIT
-mkdir "${test_directory}/bin" "${test_directory}/build"
+mkdir "${test_directory}/bin" "${test_directory}/build" "${test_directory}/toolchain" "${test_directory}/docker"
 ln -s "${self_dir}/test-build-toolchain-probe" "${test_directory}/bin/cmake"
 ln -s "${self_dir}/test-build-toolchain-probe" "${test_directory}/bin/make"
+ln -s "${self_dir}/test-build-toolchain-probe" "${test_directory}/toolchain/installed-state"
+for script in prepare-build-environment verify-build-environment-packages
+do
+    ln -s "${self_dir}/test-build-toolchain-probe" "${test_directory}/docker/${script}"
+done
 export PATH="${test_directory}/bin:${PATH}"
 export REAVEROS_BUILD_DIRECTORY="${test_directory}/build"
 export REAVEROS_SOURCE_DIRECTORY="${test_directory}"
+export TEST_PREPARED_FILE="${test_directory}/prepared"
+export TEST_BUILT_FILE="${test_directory}/built"
 
-for expected in false true
+for scenario in pending:false:false pending:true:true build:false:true reuse:true:false install:true:false
 do
-    export TEST_LLVM_REBUILD=${expected}
+    IFS=: read -r TEST_LLVM_RECOVERY TEST_LLVM_REBUILD expected <<< "${scenario}"
+    export TEST_LLVM_RECOVERY TEST_LLVM_REBUILD
     output=$("${self_dir}/build-toolchain" --probe)
     if [[ ${output} != *"reaveros_llvm_rebuild=${expected}"* ]]
     then
@@ -45,5 +76,18 @@ do
         exit 1
     fi
 done
+
+# Package preparation can replace a same-path compiler after the first probe.
+# A second configure and lifecycle probe must defer before Make is executed.
+export TEST_LLVM_RECOVERY=pending TEST_LLVM_REBUILD=false TEST_RECOVERY_AFTER_PREPARE=true
+output=$("${self_dir}/build-toolchain" --update --defer-llvm)
+[[ ${output} == *'reaveros_update_result=deferred'* && -f ${TEST_PREPARED_FILE} && ! -f ${TEST_BUILT_FILE} ]]
+rm "${TEST_PREPARED_FILE}"
+output=$("${self_dir}/build-toolchain" --update)
+[[ ${output} == *'reaveros_update_result=updated'* && -f ${TEST_PREPARED_FILE} && -f ${TEST_BUILT_FILE} ]]
+rm "${TEST_PREPARED_FILE}" "${TEST_BUILT_FILE}"
+export TEST_LLVM_RECOVERY=build
+output=$("${self_dir}/build-toolchain" --update --defer-llvm)
+[[ ${output} == *'reaveros_update_result=deferred'* && ! -f ${TEST_PREPARED_FILE} && ! -f ${TEST_BUILT_FILE} ]]
 
 printf 'Toolchain rebuild probe tests passed.\n'

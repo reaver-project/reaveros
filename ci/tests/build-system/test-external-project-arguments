@@ -1,0 +1,185 @@
+#!/usr/bin/env python3
+
+import json
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+
+
+repository = Path(__file__).resolve().parents[3]
+fixture = repository / "ci/tests/build-system/fixtures/component-install"
+
+
+def run(*command, expected=0, cwd=None):
+    result = subprocess.run(command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    assert result.returncode == expected, (command, cwd, result.stdout)
+    assert "jobserver unavailable" not in result.stdout, result.stdout
+    return result.stdout
+
+
+def cache_values(path):
+    return {line.split(":", 1)[0]: line.split("=", 1)[1] for line in path.read_text().splitlines()
+        if not line.startswith(("#", "//")) and ":" in line and "=" in line}
+
+
+with tempfile.TemporaryDirectory(prefix="external project arguments with spaces ") as temporary:
+    root = Path(temporary)
+    source = root / "source"
+    shutil.copytree(fixture, source)
+    for name in ("alpha", "beta"):
+        component = source / name
+        shutil.copytree(fixture / "component", component)
+        (component / "files").mkdir()
+        (component / "files" / (name + ".h")).write_text(name + " header\n")
+        (component / "hosted.h").write_text(name + " hosted\n")
+    declarations = source / "CMakeLists.txt"
+    declarations.write_text(declarations.read_text().replace("NAME alpha ",
+        'CMAKE_ARGS "-DARGUMENT_ITEMS:STRING=first;;third;" '
+        '"-DLITERAL_PIPE:STRING=left|right" '
+        '"-DLITERAL_SEPARATOR:STRING=__reaveros_list_separator__"\n    NAME alpha.part ')
+        .replace("alpha-freestanding-amd64", "alpha.part-freestanding-amd64"))
+    log = root / "launcher 'quotes' | __reaveros_list_separator__"
+    launcher = ";".join((sys.executable,
+        str(repository / "ci/tests/build-system/fixtures/toolchain-modes/launcher.py"), str(log)))
+    build = root / "build"
+    command = ["cmake", "-S", str(source), "-B", str(build), "-G", "Unix Makefiles",
+        "-DTEST_REPOSITORY=" + str(repository), "-DCMAKE_CXX_COMPILER_LAUNCHER=" + launcher]
+    run(*command)
+    run("make", "-C", str(build), "-j4", "components")
+    calls = [json.loads(line) for line in log.read_text().splitlines()]
+    assert any(str(source / "alpha/main.cpp") in call for call in calls)
+    assert any(str(source / "beta/main.cpp") in call for call in calls)
+    child = build / "alpha.part-freestanding-amd64-prefix/src/alpha.part-freestanding-amd64-build"
+    values = cache_values(child / "CMakeCache.txt")
+    assert values["CMAKE_CXX_COMPILER_LAUNCHER"] == launcher, values
+    assert values["ARGUMENT_ITEMS"] == "first;;third;", values
+    assert values["LITERAL_PIPE"] == "left|right", values
+    assert values["LITERAL_SEPARATOR"] == "__reaveros_list_separator__", values
+    sysroot = build / "install/sysroots/amd64-freestanding"
+    owner = build / "cmake/install-ownership/alpha.part-freestanding-amd64.txt"
+    assert str(sysroot / "usr/include/alpha.h") in owner.read_text()
+    before = (sysroot / "usr/bin/alpha").stat().st_mtime_ns
+    run(*command)
+    run("make", "-C", str(build), "-j4", "components")
+    assert (sysroot / "usr/bin/alpha").stat().st_mtime_ns == before
+    conflict = source / "beta/files/alpha.h"
+    conflict.write_text("conflicting header\n")
+    output = run("make", "-C", str(build), "beta-freestanding-amd64", expected=2)
+    assert "Install ownership conflict" in output and "alpha.part-freestanding-amd64" in output, output
+    assert (sysroot / "usr/include/alpha.h").read_text() == "alpha header\n"
+    conflict.unlink()
+    (source / "alpha/files/alpha.h").rename(source / "alpha/files/renamed.h")
+    run("make", "-C", str(build), "alpha.part-freestanding-amd64")
+    assert not (sysroot / "usr/include/alpha.h").exists()
+    assert (sysroot / "usr/include/renamed.h").is_file()
+    assert "renamed.h" in owner.read_text()
+
+with tempfile.TemporaryDirectory(prefix="upstream arguments with 'quotes' ") as temporary, \
+        tempfile.TemporaryDirectory(prefix="autoconf arguments with spaces ") as autoconf_temporary:
+    root = Path(temporary)
+    log = root / "launcher log | __reaveros_list_separator__"
+    launcher = ";".join((sys.executable,
+        str(repository / "ci/tests/build-system/fixtures/toolchain-modes/launcher.py"), str(log)))
+    parent = root / "parent"
+    run("cmake", "-S", str(repository), "-B", str(parent), "-G", "Unix Makefiles",
+        "-DREAVEROS_USE_CACHE=OFF", "-DREAVEROS_ENABLE_UNIT_TESTS=ON",
+        "-DCMAKE_C_COMPILER=" + shutil.which("cc") + ";-DREQUIRED_HOST_C_ARGUMENT=37",
+        "-DCMAKE_CXX_COMPILER=" + shutil.which("c++") + ";-DREQUIRED_HOST_CXX_ARGUMENT=41",
+        "-DCMAKE_C_COMPILER_LAUNCHER=" + launcher, "-DCMAKE_CXX_COMPILER_LAUNCHER=" + launcher,
+        "-DCMAKE_PROJECT_INCLUDE=" + str(repository / "ci/tests/build-system/fixtures/external-project-arguments/project-include.cmake"))
+    records = json.loads((parent / "toolchain-arguments.json").read_text())
+    source = root / "source"
+    shutil.copytree(fixture / "component", source)
+    (source / "files").mkdir()
+    (source / "hosted.h").write_text("header\n")
+    main = source / "main.cpp"
+    main.write_text("#ifndef REQUIRED_HOST_CXX_ARGUMENT\n#error Mandatory compiler option lost\n#endif\n"
+        "static_assert(REQUIRED_HOST_CXX_ARGUMENT == 41);\n" + main.read_text())
+    for project in ("toolchain-cmake", "toolchain-llvm", "toolchain-thorn"):
+        arguments = records[project]["CMAKE_ARGS"]
+        child = root / project
+        run("cmake", "-S", str(source), "-B", str(child), "-G", "Unix Makefiles",
+            *arguments, "-DCMAKE_INSTALL_PREFIX=" + str(child / "install"))
+        run("make", "-C", str(child), "-j4")
+        values = cache_values(child / "CMakeCache.txt")
+        assert values["CMAKE_C_COMPILER_LAUNCHER"] == launcher, values
+        assert values["CMAKE_CXX_COMPILER_LAUNCHER"] == launcher, values
+        assert values["CMAKE_C_COMPILER_ARG1"] == "-DREQUIRED_HOST_C_ARGUMENT=37", values
+        assert values["CMAKE_CXX_COMPILER_ARG1"] == "-DREQUIRED_HOST_CXX_ARGUMENT=41", values
+        if project == "toolchain-llvm":
+            assert values["LLVM_ENABLE_PROJECTS"] == "clang;lld", values
+            assert values["LLVM_RUNTIME_TARGETS"] == "default;x86_64-pc-reaveros-none;x86_64-pc-reaveros-elf", values
+            assert values["RUNTIMES_default_LLVM_ENABLE_RUNTIMES"] == "compiler-rt;libunwind;libcxx;libcxxabi", values
+    # Autoconf's own config.status does not escape source-path apostrophes.
+    # Keep its paths representable, while launcher argv retains quoted paths.
+    autoconf_root = Path(autoconf_temporary)
+    autoconf_source = autoconf_root / "source with spaces"
+    autoconf_source.mkdir()
+    (autoconf_source / "configure.ac").write_text("""AC_INIT([host-compiler-options], [1.0])
+AC_CONFIG_SRCDIR([configure.ac])
+AC_PROG_CC
+AC_PROG_CXX
+AC_LANG_PUSH([C])
+AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
+#ifndef REQUIRED_HOST_C_ARGUMENT
+#error Mandatory C compiler option lost
+#endif
+]], [[typedef int required_value[(REQUIRED_HOST_C_ARGUMENT == 37) ? 1 : -1];]])],
+[], [AC_MSG_ERROR([Mandatory C compiler option lost])])
+AC_LANG_POP([C])
+AC_LANG_PUSH([C++])
+AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
+#ifndef REQUIRED_HOST_CXX_ARGUMENT
+#error Mandatory C++ compiler option lost
+#endif
+]], [[static_assert(REQUIRED_HOST_CXX_ARGUMENT == 41);]])],
+[], [AC_MSG_ERROR([Mandatory C++ compiler option lost])])
+AC_LANG_POP([C++])
+AC_CONFIG_FILES([Makefile subdir/Makefile])
+AC_OUTPUT
+""")
+    (autoconf_source / "Makefile.in").write_text("all:\n\t$(MAKE) -C subdir\n")
+    subdir = autoconf_source / "subdir"
+    subdir.mkdir()
+    (subdir / "Makefile.in").write_text('CC=@CC@\nCXX=@CXX@\nall:\n'
+        '\t$(CC) -c "@srcdir@/probe.c" -o probe.o\n'
+        '\t$(CXX) -c "@srcdir@/probe.cpp" -o probe-cxx.o\n')
+    for suffix, required, value in (("c", "REQUIRED_HOST_C_ARGUMENT", 37),
+                                    ("cpp", "REQUIRED_HOST_CXX_ARGUMENT", 41)):
+        (subdir / ("probe." + suffix)).write_text('#ifndef ' + required
+            + '\n#error Mandatory compiler option lost\n#endif\n'
+            + 'typedef int required_value[(' + required + ' == ' + str(value) + ') ? 1 : -1];\n')
+    (autoconf_source / "autogen.sh").write_text("#!/bin/sh\nexec autoconf\n")
+    (autoconf_source / "autogen.sh").chmod(0o755)
+    run("autoconf", cwd=autoconf_source)
+    for project in ("toolchain-dosfstools", "toolchain-mtools"):
+        build = autoconf_root / (project + " configure with spaces")
+        build.mkdir()
+        substitutions = {"<SOURCE_DIR>": str(autoconf_source), "<BINARY_DIR>": str(build),
+                         "<INSTALL_DIR>": str(build / "install")}
+        command = records[project]["CONFIGURE_COMMAND"]
+        parts = [[]]
+        for argument in command:
+            if argument == "COMMAND":
+                parts.append([])
+            else:
+                for placeholder, value in substitutions.items():
+                    argument = argument.replace(placeholder, value)
+                parts[-1].append(argument)
+        for part in parts:
+            run(*part, cwd=build)
+        config_log = (build / "config.log").read_text()
+        assert "CC='reaveros-cc'" in config_log, config_log
+        assert "CXX='reaveros-cxx'" in config_log, config_log
+        build_command = records[project]["BUILD_COMMAND"]
+        for placeholder, value in substitutions.items():
+            build_command = [argument.replace(placeholder, value) for argument in build_command]
+        run(*(argument.replace("$(MAKE)", "make") for argument in build_command), cwd=build)
+        assert (build / "subdir/probe.o").is_file()
+        assert (build / "subdir/probe-cxx.o").is_file()
+    calls = [json.loads(line) for line in log.read_text().splitlines()]
+    assert len(calls) >= 10, calls
+
+print("ExternalProject preserves host compiler options, launcher argv, cache lists, literal pipes, and dotted install ownership.")

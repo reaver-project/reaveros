@@ -1,6 +1,5 @@
 set(REAVEROS_LLVM_PARALLEL_LINK_JOBS 8 CACHE STRING "Sets the limit for parallel link jobs of LLVM.")
 
-set(_reaveros_amd64_freestanding_target x86_64-pc-reaveros-none)
 set(_reaveros_amd64_freestanding_flags
     COMPILER_RT_BUILD_BUILTINS=ON
     COMPILER_RT_BUILD_LIBFUZZER=OFF
@@ -15,7 +14,6 @@ set(_reaveros_amd64_freestanding_extra_cc_flags
     "-fno-rtti -fno-exceptions -mno-red-zone -fno-stack-protector"
 )
 
-set(_reaveros_amd64_hosted_target x86_64-pc-reaveros-elf)
 set(_reaveros_amd64_hosted_flags
     COMPILER_RT_BUILD_BUILTINS=ON
     COMPILER_RT_BUILD_LIBFUZZER=OFF
@@ -44,9 +42,12 @@ else()
     set(_runtime_flags)
 endif()
 
-set(_fakeroot "--sysroot=${CMAKE_CURRENT_SOURCE_DIR}/llvm/fakeroot")
+set(_fakeroot "--sysroot='${CMAKE_CURRENT_SOURCE_DIR}/llvm/fakeroot'")
+set(_llvm_backends)
 
 foreach (architecture IN LISTS REAVEROS_ARCHITECTURES)
+    list(APPEND _llvm_backends "${_reaveros_${architecture}_llvm_backend}")
+    set(_processor ${_reaveros_${architecture}_processor})
     foreach (mode IN ITEMS freestanding hosted)
         set(_target ${_reaveros_${architecture}_${mode}_target})
         set(_cc_flags ${_reaveros_${architecture}_${mode}_extra_cc_flags})
@@ -60,8 +61,8 @@ foreach (architecture IN LISTS REAVEROS_ARCHITECTURES)
         foreach (_llvm_runtime IN ITEMS BUILTINS RUNTIMES)
             list(APPEND _runtime_flags
                 -D${_llvm_runtime}_${_target}_LLVM_ENABLE_RUNTIMES=compiler-rt
-                -D${_llvm_runtime}_${_target}_CMAKE_SYSTEM_NAME=ReaverOS
-                -D${_llvm_runtime}_${_target}_CMAKE_SYSTEM_PROCESSOR=${_arch}
+                -D${_llvm_runtime}_${_target}_CMAKE_SYSTEM_NAME=${_reaveros_${mode}_system}
+                -D${_llvm_runtime}_${_target}_CMAKE_SYSTEM_PROCESSOR=${_processor}
                 -D${_llvm_runtime}_${_target}_CMAKE_BUILD_TYPE=RelWithDebInfo
                 "-D${_llvm_runtime}_${_target}_CMAKE_ASM_FLAGS=-nodefaultlibs -nostartfiles ${_fakeroot} ${_cc_flags}"
                 "-D${_llvm_runtime}_${_target}_CMAKE_C_FLAGS=-nodefaultlibs -nostartfiles ${_fakeroot} ${_cc_flags}"
@@ -73,6 +74,8 @@ foreach (architecture IN LISTS REAVEROS_ARCHITECTURES)
         endforeach()
     endforeach()
 endforeach()
+list(REMOVE_DUPLICATES _llvm_backends)
+string(JOIN "|" _llvm_backends ${_llvm_backends})
 
 set(patch_files
     ${CMAKE_CURRENT_LIST_DIR}/llvm/patches/000-reaveros-support-with-less-plt.patch
@@ -80,9 +83,31 @@ set(patch_files
 reaveros_patch_dependency(
     patch_dependency toolchain-llvm
     ${REAVEROS_LLVM_REVISION}-${REAVEROS_LLVM_SOURCE_SHA256} ${patch_files}
+    "${REAVEROS_SOURCE_DIR}/toolchain/hydrate-git-archive"
 )
 
 string(REGEX REPLACE "^llvmorg-" "" _llvm_source_version "${REAVEROS_LLVM_TAG}")
+# Convert the existing runtime-list representation before argument transport.
+string(REPLACE "|" ";" _runtime_targets "${_runtime_targets}")
+string(REPLACE "|" ";" _llvm_backends "${_llvm_backends}")
+string(REPLACE "|" "\\;" _runtime_flags "${_runtime_flags}")
+_reaveros_ep_arguments(_llvm_args _llvm_separator
+    "${CMAKE_CURRENT_SOURCE_DIR};${REAVEROS_BINARY_DIR};${REAVEROS_CMAKE};${GIT_EXECUTABLE}"
+    "-DCMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
+    "-DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}"
+    "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
+    ${_reaveros_host_compiler_args}
+    "-DCMAKE_C_COMPILER_LAUNCHER=${CMAKE_C_COMPILER_LAUNCHER}"
+    "-DCMAKE_CXX_COMPILER_LAUNCHER=${CMAKE_CXX_COMPILER_LAUNCHER}"
+    -DCMAKE_BUILD_TYPE=Release -Wno-dev -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>
+    "-DLLVM_TARGETS_TO_BUILD=${_llvm_backends}"
+    "-DLLVM_ENABLE_PROJECTS=clang;lld"
+    "-DLLVM_ENABLE_RUNTIMES=libunwind;libcxx;libcxxabi"
+    "-DLLVM_RUNTIME_TARGETS=${_runtime_targets}"
+    "-DLLVM_BUILTIN_TARGETS=${_runtime_targets}"
+    ${_runtime_flags}
+    "-DLLVM_PARALLEL_LINK_JOBS=${REAVEROS_LLVM_PARALLEL_LINK_JOBS}"
+    -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_EXAMPLES=OFF)
 ExternalProject_Add(toolchain-llvm
     URL ${REAVEROS_LLVM_REPO}/releases/download/${REAVEROS_LLVM_TAG}/llvm-project-${_llvm_source_version}.src.tar.xz
     URL_HASH SHA256=${REAVEROS_LLVM_SOURCE_SHA256}
@@ -99,31 +124,18 @@ ExternalProject_Add(toolchain-llvm
     SOURCE_SUBDIR llvm
     ${_REAVEROS_CONFIGURE_HANDLED_BY_BUILD}
 
-    LIST_SEPARATOR |
+    LIST_SEPARATOR "${_llvm_separator}"
 
     PATCH_COMMAND ""
 
     CMAKE_COMMAND ${REAVEROS_CMAKE}
-    CMAKE_ARGS
-        -DCMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}
-        -DCMAKE_C_COMPILER_LAUNCHER=${CMAKE_C_COMPILER_LAUNCHER}
-        -DCMAKE_CXX_COMPILER_LAUNCHER=${CMAKE_CXX_COMPILER_LAUNCHER}
-        -DCMAKE_BUILD_TYPE=Release
-        -Wno-dev
-        -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>
-        -DLLVM_TARGETS_TO_BUILD=X86
-        -DLLVM_ENABLE_PROJECTS=clang|lld
-        -DLLVM_ENABLE_RUNTIMES=libunwind|libcxx|libcxxabi
-        -DLLVM_RUNTIME_TARGETS=${_runtime_targets}
-        -DLLVM_BUILTIN_TARGETS=${_runtime_targets}
-        "${_runtime_flags}"
-        -DLLVM_PARALLEL_LINK_JOBS=${REAVEROS_LLVM_PARALLEL_LINK_JOBS}
-        -DLLVM_INCLUDE_TESTS=OFF
-        -DLLVM_INCLUDE_EXAMPLES=OFF
+    CMAKE_ARGS ${_llvm_args}
 )
+_reaveros_add_ep_file_dependencies(toolchain-llvm download ${patch_dependency})
 ExternalProject_Add_Step(toolchain-llvm
     hydrate-source
-    COMMAND bash ${REAVEROS_SOURCE_DIR}/toolchain/hydrate-git-archive
+    COMMAND "${CMAKE_COMMAND}" -E env "GIT_EXECUTABLE=${GIT_EXECUTABLE}"
+        "${REAVEROS_HOST_BASH}" "${REAVEROS_SOURCE_DIR}/toolchain/hydrate-git-archive"
         <SOURCE_DIR> ${REAVEROS_LLVM_REPO} ${REAVEROS_LLVM_TAG}
         ${REAVEROS_LLVM_REVISION} <DOWNLOADED_FILE>
     DEPENDEES download update patch
@@ -135,17 +147,38 @@ reaveros_add_ep_source_identity_step(toolchain-llvm
     DEPENDEES hydrate-source)
 ExternalProject_Add_Step(toolchain-llvm
     apply-patches
-    COMMAND git reset --hard
-    COMMAND git clean -fxd
-    COMMAND git checkout --detach ${REAVEROS_LLVM_REVISION}
-    COMMAND git apply ${patch_files}
+    COMMAND "${GIT_EXECUTABLE}" reset --hard
+    COMMAND "${GIT_EXECUTABLE}" clean -fxd
+    COMMAND "${GIT_EXECUTABLE}" checkout --detach ${REAVEROS_LLVM_REVISION}
+    COMMAND "${GIT_EXECUTABLE}" apply ${patch_files}
     DEPENDEES hydrate-source
     DEPENDERS configure
     WORKING_DIRECTORY <SOURCE_DIR>
 )
+string(REGEX REPLACE "^llvmorg-([0-9]+).*" "\\1" _llvm_version "${REAVEROS_LLVM_TAG}")
+set(_required_llvm_outputs bin/clang bin/clang++ bin/ld.lld bin/lld-link
+    bin/llvm-ar bin/llvm-ranlib bin/llvm-readelf bin/llvm-readobj bin/llvm-objcopy bin/llvm-nm
+    "lib/clang/${_llvm_version}/include/stddef.h")
+foreach (_architecture IN LISTS REAVEROS_ARCHITECTURES)
+    foreach (_mode freestanding hosted)
+        list(APPEND _required_llvm_outputs
+            "lib/clang/${_llvm_version}/lib/${_reaveros_${_architecture}_${_mode}_target}/libclang_rt.builtins.a")
+    endforeach()
+    if (REAVEROS_ENABLE_UNIT_TESTS)
+        list(APPEND _required_llvm_outputs
+            "include/c++/v1/cstddef"
+            "include/${_reaveros_${_architecture}_tests_target}/c++/v1/__config_site")
+        # libc++.so is a linker script; its SONAME entry verifies the real DSO.
+        foreach (_library libc++.so libc++.so.1 libc++abi.so libunwind.so)
+            list(APPEND _required_llvm_outputs "lib/${_reaveros_${_architecture}_tests_target}/${_library}")
+        endforeach()
+    endif()
+endforeach()
 reaveros_add_ep_prune_target(toolchain-llvm
     SOURCE_STEP hydrate-source
+    SOURCE_STEP_AFTER_PATCH
     REMOVE_DOWNLOADED_ARCHIVE
+    REQUIRED_INSTALLED_OUTPUTS ${_required_llvm_outputs}
 )
 
 # install compiler-rt to the appropriate sysroots
@@ -156,13 +189,14 @@ foreach (architecture IN LISTS REAVEROS_ARCHITECTURES)
         set(_builtin_lib "${REAVEROS_BINARY_DIR}/install/toolchain/llvm/lib/clang/${_sub_path}/libclang_rt.builtins.a")
         set(_destination "${REAVEROS_BINARY_DIR}/install/sysroots/${architecture}-${mode}/usr/lib")
 
-        add_custom_command(TARGET toolchain-llvm POST_BUILD
-            COMMAND mkdir -p ${_destination}
-            COMMAND cp ${_builtin_lib} ${_destination}
-        )
+        # The main ExternalProject target depends on its install step target.
+        # Keep one producer, which also repairs copies in deleted sysroots.
         add_custom_command(TARGET toolchain-llvm-install POST_BUILD
-            COMMAND mkdir -p ${_destination}
-            COMMAND cp ${_builtin_lib} ${_destination}
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${_destination}"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${_builtin_lib}" "${_destination}/libclang_rt.builtins.a"
+            BYPRODUCTS "${_destination}/libclang_rt.builtins.a"
+            VERBATIM
         )
     endforeach()
 endforeach()

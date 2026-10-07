@@ -1,0 +1,46 @@
+include_guard(DIRECTORY)
+include("${CMAKE_CURRENT_LIST_DIR}/host-tools.cmake")
+
+# Ordinary project policy is separate from the toolchain's ABI requirements.
+# Prepend defaults to the effective flags without modifying the user's cache;
+# compatible user options such as -Wno-error therefore retain their precedence.
+set(_reaveros_warnings "-Wall -Wextra -Wpedantic -Werror -Wno-unused-const-variable")
+if (REAVEROS_BUILD_MODE STREQUAL "tests")
+    string(APPEND _reaveros_warnings " -g")
+endif()
+foreach (_language IN ITEMS C CXX)
+    set(CMAKE_${_language}_FLAGS "${_reaveros_warnings} ${CMAKE_${_language}_FLAGS}")
+endforeach()
+
+if (REAVEROS_BUILD_MODE STREQUAL "tests")
+    include("${CMAKE_CURRENT_LIST_DIR}/native-tests.cmake")
+endif()
+
+if (NOT DEFINED CMAKE_C_STANDARD OR CMAKE_C_STANDARD STREQUAL "")
+    set(CMAKE_C_STANDARD @REAVEROS_C_STANDARD@)
+elseif (CMAKE_C_STANDARD STREQUAL "90" OR CMAKE_C_STANDARD STREQUAL "99"
+        OR CMAKE_C_STANDARD LESS @REAVEROS_C_STANDARD@)
+    message(FATAL_ERROR "ReaverOS requires at least C@REAVEROS_C_STANDARD@")
+endif()
+if (NOT DEFINED CMAKE_CXX_STANDARD OR CMAKE_CXX_STANDARD STREQUAL "")
+    set(CMAKE_CXX_STANDARD @REAVEROS_CXX_STANDARD@)
+elseif (CMAKE_CXX_STANDARD STREQUAL "98" OR CMAKE_CXX_STANDARD LESS @REAVEROS_CXX_STANDARD@)
+    message(FATAL_ERROR "ReaverOS requires at least C++@REAVEROS_CXX_STANDARD@")
+endif()
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+get_property(_reaveros_in_try_compile GLOBAL PROPERTY IN_TRY_COMPILE)
+if (REAVEROS_BUILD_MODE AND NOT REAVEROS_BUILD_MODE STREQUAL "uefi" AND NOT _reaveros_in_try_compile)
+    include("${CMAKE_CURRENT_LIST_DIR}/linker-policy.cmake")
+    if (REAVEROS_BUILD_MODE STREQUAL "freestanding" OR REAVEROS_BUILD_MODE STREQUAL "hosted")
+        get_property(_reaveros_languages GLOBAL PROPERTY ENABLED_LANGUAGES)
+        foreach (_reaveros_language IN ITEMS C CXX)
+            if (_reaveros_language IN_LIST _reaveros_languages)
+                _reaveros_initialize_linker_information(${_reaveros_language})
+            endif()
+        endforeach()
+    endif()
+endif()

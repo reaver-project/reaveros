@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import tempfile
+
+
+repository = Path(__file__).resolve().parents[3]
+
+
+def run(*command):
+    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    if result.returncode:
+        raise RuntimeError(result.stdout)
+    if "jobserver unavailable" in result.stdout:
+        raise AssertionError(result.stdout)
+    return result.stdout
+
+
+with tempfile.TemporaryDirectory() as temporary:
+    directory = Path(temporary)
+    source = directory / "source with spaces"
+    shutil.copytree(repository / "ci/tests/build-system/fixtures/incbin", source)
+    # Load the production generation, archive, and OBJECT_DEPENDS rules without
+    # their unrelated kernel/Thorn/bootinit prerequisites.
+    rules = (repository / "kernel/interface.cmake").read_text()
+    blocks = list(re.finditer(r"file\(CONFIGURE[^\n]*incbin_(bootinit|vdso)\.asm", rules))
+    for index, block in enumerate(blocks):
+        name = block.group(1)
+        end = blocks[index + 1].start() if index + 1 < len(blocks) else len(rules)
+        component = source / name
+        component.mkdir()
+        variable = "REAVEROS_BOOTINIT_FILE" if name == "bootinit" else "REAVEROS_KERNEL_VDSO_FILE"
+        binary = "bootinit" if name == "bootinit" else "libvdso.so"
+        (component / "CMakeLists.txt").write_text(
+            'set(' + variable + ' "${CMAKE_CURRENT_BINARY_DIR}/' + binary + '")\n'
+            + rules[block.start():end])
+    build = directory / "build with spaces"
+
+    def configure():
+        run("cmake", "-S", str(source), "-B", str(build), "-G", "Unix Makefiles")
+
+    def build_consumer():
+        return run("make", "-C", str(build), "-j4", "incbin-consumer")
+
+    configure()
+    payloads = {"bootinit": b"bootinit fixture payload", "vdso": b"vdso fixture payload"}
+    binaries = {"bootinit": build / "bootinit/bootinit", "vdso": build / "vdso/libvdso.so"}
+    assembly = {name: build / name / ("incbin_" + name + ".asm") for name in payloads}
+    objects = {name: build / name / "CMakeFiles" / (name + "-incbin.dir")
+               / ("incbin_" + name + ".asm.o") for name in payloads}
+    archives = {name: build / name / ("lib" + name + "-incbin.a") for name in payloads}
+    for name, payload in payloads.items():
+        binaries[name].write_bytes(payload)
+    build_consumer()
+    consumer = build / "incbin-consumer"
+
+    def assert_payloads():
+        assert run(str(consumer)).strip() == "{} {}".format(
+            len(payloads["bootinit"]), len(payloads["vdso"]))
+        for name, payload in payloads.items():
+            assert payload in archives[name].read_bytes()
+
+    assert_payloads()
+    tracked = [*assembly.values(), *objects.values(), *archives.values(), consumer]
+    timestamps = {path: path.stat().st_mtime_ns for path in tracked}
+    configure()
+    assert all(path.stat().st_mtime_ns == timestamps[path] for path in assembly.values()), \
+        "Unchanged reconfiguration rewrote incbin assembly"
+    build_consumer()
+    assert all(path.stat().st_mtime_ns == mtime for path, mtime in timestamps.items()), \
+        "Unchanged reconfiguration rebuilt incbin objects, archives, or consumer"
+
+    for changed in payloads:
+        before = {path: path.stat().st_mtime_ns for path in tracked}
+        payloads[changed] += b" changed binary"
+        binaries[changed].write_bytes(payloads[changed])
+        build_consumer()
+        assert_payloads()
+        assert objects[changed].stat().st_mtime_ns != before[objects[changed]]
+        assert consumer.stat().st_mtime_ns != before[consumer]
+        other = "vdso" if changed == "bootinit" else "bootinit"
+        assert objects[other].stat().st_mtime_ns == before[objects[other]]
+        assert all(path.stat().st_mtime_ns == before[path] for path in assembly.values())
+
+    # Deleting a generated source is repaired by reconfiguration.
+    for path in assembly.values():
+        path.unlink()
+    configure()
+    build_consumer()
+    assert_payloads()
+
+print("Incbin generation preserves unchanged build state and tracks both embedded binaries.")

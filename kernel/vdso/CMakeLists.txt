@@ -1,3 +1,10 @@
+cmake_minimum_required(VERSION 3.31)
+project(reaveros-kernel-interface CXX)
+
+if (NOT IS_ABSOLUTE "${REAVEROS_HOSTED_SYSROOT}")
+    message(FATAL_ERROR "The superbuild must provide REAVEROS_HOSTED_SYSROOT.")
+endif()
+
 file(GLOB thorn_files
     CONFIGURE_DEPENDS
     *.thorn
@@ -5,7 +12,8 @@ file(GLOB thorn_files
 
 set(_thorn_user_files "${CMAKE_CURRENT_BINARY_DIR}/thorn/user/types.h")
 set(_thorn_vdso_files)
-set(_thorn_kernel_files)
+set(_thorn_kernel_files "${CMAKE_CURRENT_BINARY_DIR}/thorn/kernel/meta.h")
+set(_kernel_sources "")
 
 foreach (abs_thorn_file IN LISTS thorn_files)
     file(RELATIVE_PATH thorn_file "${CMAKE_CURRENT_SOURCE_DIR}" "${abs_thorn_file}")
@@ -14,6 +22,7 @@ foreach (abs_thorn_file IN LISTS thorn_files)
     list(APPEND _thorn_user_files "${CMAKE_CURRENT_BINARY_DIR}/thorn/user/${base}.h")
     list(APPEND _thorn_vdso_files "${CMAKE_CURRENT_BINARY_DIR}/thorn/vdso/${base}.cpp")
     list(APPEND _thorn_kernel_files "${CMAKE_CURRENT_BINARY_DIR}/thorn/kernel/${base}.cpp")
+    list(APPEND _kernel_sources "generated/kernel/${base}.cpp")
 endforeach()
 
 add_custom_command(
@@ -26,6 +35,7 @@ add_custom_command(
     COMMAND "${REAVEROS_THORN}" -i "${CMAKE_CURRENT_SOURCE_DIR}" -o "${CMAKE_CURRENT_BINARY_DIR}/thorn" -s "rose::syscall" -a ${REAVEROS_ARCH}
     DEPENDS ${REAVEROS_THORN} ${thorn_files}
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    VERBATIM
 )
 add_custom_target(thorn-generation
     DEPENDS
@@ -34,88 +44,57 @@ add_custom_target(thorn-generation
         ${_thorn_kernel_files}
 )
 
-set_source_files_properties(
-    FILES
-        ${_thorn_user_files}
-        ${_thorn_vdso_files}
-        ${_thorn_kernel_files}
-    PROPERTIES
-        GENERATED TRUE
-)
-
 add_library(vdso SHARED
     ${_thorn_vdso_files}
 )
 add_dependencies(vdso thorn-generation)
+target_include_directories(vdso PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/thorn")
 
-set_target_properties(vdso
-    PROPERTIES
-        LINK_FLAGS "-z separate-loadable-segments"
-)
-
-string(REGEX REPLACE
-    "sysroots/${REAVEROS_ARCH}-freestanding$"
-    "sysroots/${REAVEROS_ARCH}-hosted"
-    _hosted_sysroot ${CMAKE_SYSROOT}
-)
+target_link_options(vdso PRIVATE LINKER:-z,separate-loadable-segments)
+reaveros_require_linker_dependencies(vdso CXX)
 
 install(FILES ${_thorn_user_files}
-    DESTINATION ${_hosted_sysroot}/usr/include/rose/syscall
+    DESTINATION "${REAVEROS_HOSTED_SYSROOT}/usr/include/rose/syscall"
 )
 
 install(TARGETS vdso
-    DESTINATION ${_hosted_sysroot}/usr/lib
+    DESTINATION "${REAVEROS_HOSTED_SYSROOT}/usr/lib"
 )
 
-add_library(syscall_table STATIC
-    ${_thorn_kernel_files}
-)
-add_dependencies(syscall_table thorn-generation)
-
-set_target_properties(syscall_table
-    PROPERTIES
-        COMPILE_FLAGS "-I${CMAKE_SOURCE_DIR} -g -mcmodel=kernel"
-)
-
-file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/incbin_vdso.asm
-    "
-    .section .vdso
-    .globl begin_vdso
-    .globl end_vdso
-    begin_vdso:
-    .incbin \"${CMAKE_CURRENT_BINARY_DIR}/libvdso.so\"
-    end_vdso:
-    "
-)
-
-add_library(vdso-incbin STATIC
-    ${CMAKE_CURRENT_BINARY_DIR}/incbin_vdso.asm
-)
-
-set_source_files_properties(
-    ${CMAKE_CURRENT_BINARY_DIR}/incbin_vdso.asm
-    PROPERTIES
-        OBJECT_DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/libvdso.so
-)
-
-add_dependencies(vdso-incbin vdso)
+# Keep the generated kernel/user sibling layout required by Thorn's includes.
+install(FILES ${_thorn_user_files} DESTINATION generated/user)
+install(FILES ${_thorn_kernel_files} DESTINATION generated/kernel)
+string(JOIN "\n" _kernel_sources ${_kernel_sources})
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/kernel-sources.txt"
+    CONTENT "${_kernel_sources}\n")
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/kernel-sources.txt" DESTINATION .)
 
 set(vdso_symbols_file "${CMAKE_CURRENT_BINARY_DIR}/vdso_symbols.lds")
-set(vdso_symbols_file "${vdso_symbols_file}" PARENT_SCOPE)
 
 add_custom_command(OUTPUT ${vdso_symbols_file}
-    COMMAND ${CMAKE_READELF} --dyn-syms $<TARGET_FILE:vdso> | tail -n+4 | grep 'FUNC' | grep -v __rose_syscall | awk \'{ printf \"%s = __vdso_base + 0x%s\;\\n\", $$8, $$2; }\' > ${vdso_symbols_file}
+    COMMAND "${REAVEROS_HOST_BASH}" -o pipefail -c
+        "\"$1\" --dyn-syms \"$2\" | \"$4\" -n+4 | \"$5\" 'FUNC' | \"$5\" -v __rose_syscall | \"$6\" '{ printf \"%s = __vdso_base + 0x%s;\\n\", $8, $2; }' > \"$3\""
+        bash "${CMAKE_READELF}" "$<TARGET_FILE:vdso>" "${vdso_symbols_file}"
+        "${REAVEROS_HOST_TAIL}" "${REAVEROS_HOST_GREP}" "${REAVEROS_HOST_AWK}"
     DEPENDS vdso
+    VERBATIM
 )
 
 add_custom_target(vdso_symbols DEPENDS ${vdso_symbols_file})
+add_custom_target(interface-artifacts ALL DEPENDS thorn-generation vdso_symbols)
+install(FILES "${vdso_symbols_file}" DESTINATION .)
 
+# Retained for future vDSO-base-relative consumers; none currently installs or
+# consumes this optional offsets artifact.
 set(vdso_offsets_file "${CMAKE_CURRENT_BINARY_DIR}/vdso_offsets.lds")
-set(vdso_offsets_file "${vdso_offsets_file}" PARENT_SCOPE)
 
 add_custom_command(OUTPUT ${vdso_offsets_file}
-    COMMAND ${CMAKE_READELF} --dyn-syms $<TARGET_FILE:vdso> | tail -n+4 | grep __rose_syscall | awk \'{ printf \"%s = __vdso_base + 0x%s\;\\n\", $$8, $$2; }\' > ${vdso_offsets_file}
+    COMMAND "${REAVEROS_HOST_BASH}" -o pipefail -c
+        "\"$1\" --dyn-syms \"$2\" | \"$4\" -n+4 | \"$5\" __rose_syscall | \"$6\" '{ printf \"%s = __vdso_base + 0x%s;\\n\", $8, $2; }' > \"$3\""
+        bash "${CMAKE_READELF}" "$<TARGET_FILE:vdso>" "${vdso_offsets_file}"
+        "${REAVEROS_HOST_TAIL}" "${REAVEROS_HOST_GREP}" "${REAVEROS_HOST_AWK}"
     DEPENDS vdso
+    VERBATIM
 )
 
 add_custom_target(vdso_offsets DEPENDS ${vdso_offsets_file})

@@ -12,20 +12,14 @@ file(GLOB asm_sources
     cpu/${REAVEROS_ARCH}/*.asm
 )
 
-set_source_files_properties(
-    ${asm_sources}
-    PROPERTIES
-        LANGUAGE ASM
-        COMPILE_FLAGS -integrated-as
-)
-
 add_executable(loader-uefi
     ${asm_sources}
     ${sources}
 )
+target_compile_options(loader-uefi PRIVATE "$<$<COMPILE_LANGUAGE:ASM>:-integrated-as>")
 
 target_link_libraries(loader-uefi
-    ${CMAKE_SYSROOT}/usr/lib/librosestd.a
+    PRIVATE "${CMAKE_SYSROOT}/usr/lib/librosestd.a"
 )
 
 set_target_properties(loader-uefi
@@ -36,7 +30,7 @@ set_target_properties(loader-uefi
 add_custom_target(loader-uefi-pe ALL DEPENDS ${CMAKE_BINARY_DIR}/loader-uefi)
 
 install(FILES ${CMAKE_BINARY_DIR}/loader-uefi
-    DESTINATION ${CMAKE_INSTALL_PREFIX}
+    DESTINATION .
 )
 
 if (REAVEROS_ENABLE_UNIT_TESTS)

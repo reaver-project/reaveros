@@ -1,0 +1,12 @@
+cmake_minimum_required(VERSION 3.31)
+project(host-tools-test NONE)
+include("${TEST_REPOSITORY}/cmake/host_tools.cmake")
+
+reaveros_require_host_tools("Fixture helpers" bash awk)
+reaveros_require_host_tools("Fixture helpers" bash awk)
+if (TEST_IMAGES)
+    reaveros_require_host_tools("Fixture initrd" find cpio)
+endif()
+if (TEST_UEFI)
+    reaveros_require_host_tools("Fixture UEFI" fallocate aclocal autoconf automake m4)
+endif()

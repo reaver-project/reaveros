@@ -56,7 +56,6 @@ jobs:
                 ./ci/aws/test-publish-build-environment
                 ./ci/aws/test-select-infrastructure-contract
                 ./ci/aws/test-workflows
-                ./ci/test-build-image
 
           - name: Evaluate AWS CI policy
             id: authorize
@@ -224,8 +223,9 @@ jobs:
                 ./ci/aws/test-select-build-environment
                 ./ci/aws/test-workflows
                 ./docker/test-build-toolchain-probe
+                ./ci/aws/test-push-images
+                ./ci/aws/test-strip-ecr-registry
                 ./docker/test-update-images-probe
-                ./ci/test-build-image
                 ./maintenance/test-update-toolchain
 
           - name: Compile the requested matrix

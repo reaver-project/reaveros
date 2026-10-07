@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $(basename -- "$0") == docker ]]
+then
+    printf '%s\n' "$@" > "${BUILD_IMAGE_TEST_LOG}"
+    exit
+fi
+
+self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+repo_root=$(git -C "${self_dir}" rev-parse --show-toplevel)
+test_directory=$(mktemp -d)
+artifact_directory=image-artifacts
+mkdir "${test_directory}/bin"
+
+cleanup()
+{
+    rm -rf "${test_directory}"
+}
+trap cleanup EXIT
+
+ln -s "${self_dir}/test-build-image" "${test_directory}/bin/docker"
+export BUILD_IMAGE_TEST_LOG="${test_directory}/docker-arguments"
+export PATH="${test_directory}/bin:${PATH}"
+
+cd "${test_directory}"
+"${repo_root}/ci/helpers/build-image" \
+    amd64 uefi efipart \
+    example.invalid/reaveros-build-env:test \
+    "${artifact_directory}"
+
+if ! grep --fixed-strings --line-regexp --quiet \
+    "${test_directory}/${artifact_directory}:/artifacts" \
+    "${BUILD_IMAGE_TEST_LOG}"
+then
+    printf 'The image artifact directory was not mounted by absolute path.\n' >&2
+    exit 1
+fi
+
+for required_argument in \
+    '-DREAVEROS_ARCHITECTURES="${architecture}"' \
+    '-DREAVEROS_LOADERS="${loader}"' \
+    '-DCMAKE_BUILD_TYPE="${configuration}"'
+do
+    if ! grep --fixed-strings --quiet -- "${required_argument}" "${BUILD_IMAGE_TEST_LOG}"
+    then
+        printf 'The image build did not configure %s.\n' "${required_argument}" >&2
+        exit 1
+    fi
+done
+
+for configuration in Debug Release
+do
+    "${repo_root}/ci/helpers/build-image" amd64 uefi efipart \
+        example.invalid/reaveros-build-env:test "${artifact_directory}" "${configuration}"
+    if [[ $(tail -n1 "${BUILD_IMAGE_TEST_LOG}") != "${configuration}" ]]
+    then
+        printf 'The image build did not forward the %s configuration.\n' "${configuration}" >&2
+        exit 1
+    fi
+done
+
+printf 'Image job wrapper tests passed.\n'

@@ -5,5 +5,5 @@ set(services
 )
 
 foreach (service IN LISTS services)
-    reaveros_include_component(${service} userspace-service userspace services)
+    reaveros_include_component("${service}" PREFIX userspace-service TAGS userspace services)
 endforeach()

@@ -1,0 +1,88 @@
+#!/usr/bin/env python3
+
+import fcntl
+import json
+import os
+from pathlib import Path
+import re
+import select
+import sys
+
+
+def fail(message):
+    sys.exit("Toolchain lifecycle: " + message)
+
+
+if len(sys.argv) != 5 or sys.argv[3] not in ("build", "prune"):
+    fail("usage: guard-lifecycle <build root> <project> <build|prune> <Make executable>")
+root = Path(sys.argv[1]).resolve()
+project, operation = sys.argv[2:4]
+make = Path(sys.argv[4]).resolve(strict=True)
+if root == Path("/") or not re.fullmatch(r"toolchain-[a-z0-9-]+", project):
+    fail("invalid build root or project")
+
+# Hold the lease for the outer Make invocation, including gaps between steps
+# and the stamp checks in recursive generated Makefiles. A pidfd prevents PID
+# reuse and releases the lease on normal exit, failure, or cancellation.
+pid = os.getppid()
+owner = None
+while pid > 1:
+    try:
+        process = Path("/proc") / str(pid)
+        fields = (process / "stat").read_text().rsplit(")", 1)[1].split()
+        parent = int(fields[1])
+        if (process / "exe").samefile(make):
+            cwd = (process / "cwd").resolve()
+            if cwd.is_relative_to(root):
+                owner = {"pid": pid, "start": fields[19], "operation": operation}
+        pid = parent
+    except (OSError, ValueError):
+        break
+if owner is None:
+    fail("operations must run through the superbuild's GNU Make targets")
+
+directory = root / "toolchain/lifecycle-locks"
+directory.mkdir(parents=True, exist_ok=True)
+lock = os.open(directory / (project + ".lock"), os.O_RDWR | os.O_CREAT, 0o600)
+try:
+    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except BlockingIOError:
+    try:
+        current = json.loads(os.read(lock, 4096))
+    except (ValueError, OSError):
+        current = None
+    if current == owner:
+        sys.exit(0)
+    fail(f"conflicting operation on {project}; current lease is {current}")
+
+try:
+    owner_fd = os.pidfd_open(owner["pid"])
+except OSError as error:
+    fail(f"could not track the Make invocation: {error}")
+os.ftruncate(lock, 0)
+os.write(lock, json.dumps(owner).encode())
+if os.fork():
+    # The child retains the same open-file-description lock before we return.
+    os.close(lock)
+    os.close(owner_fd)
+    sys.exit(0)
+
+os.setsid()
+null = os.open(os.devnull, os.O_RDWR)
+for descriptor in (0, 1, 2):
+    os.dup2(null, descriptor)
+if null > 2:
+    os.close(null)
+# Do not retain stdout pipes or jobserver descriptors from the invoking recipe.
+for descriptor in os.listdir("/proc/self/fd"):
+    number = int(descriptor)
+    if number > 2 and number not in (lock, owner_fd):
+        try:
+            os.close(number)
+        except OSError:
+            # os.listdir's directory descriptor is already closed after listing.
+            pass
+poll = select.poll()
+poll.register(owner_fd, select.POLLIN)
+poll.poll()
+os._exit(0)

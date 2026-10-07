@@ -1,0 +1,315 @@
+#!/usr/bin/env python3
+
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tarfile
+import tempfile
+
+
+repository = Path(__file__).resolve().parents[3]
+fixture = repository / "ci/tests/build-system/fixtures/toolchain-lifecycle"
+
+
+def run(*command, expected=0):
+    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    assert result.returncode == expected, result.stdout
+    assert "jobserver unavailable" not in result.stdout, result.stdout
+    return result.stdout
+
+
+with tempfile.TemporaryDirectory(prefix="toolchain state with spaces ") as temporary:
+    root = Path(temporary)
+    package = root / "package"
+    shutil.copytree(fixture / "package", package)
+    archive = root / "package.tar"
+    with tarfile.open(archive, "w") as stream:
+        stream.add(package, arcname="package")
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    patch = root / "patch-input"
+    patch.write_text("patch version one\n")
+    build = root / "build"
+
+    def configure(value=1, jobs=2, *options):
+        return run("cmake", "-S", str(fixture), "-B", str(build), "-G", "Unix Makefiles",
+            "-DTEST_REPOSITORY=" + str(repository), "-DTEST_ARCHIVE=" + str(archive),
+            "-DTEST_ARCHIVE_HASH=" + digest, "-DTEST_PATCH_INPUT=" + str(patch),
+            "-DTEST_VALUE=" + str(value), "-DTEST_JOBS=" + str(jobs), *options)
+
+    def make(target="toolchain-example-install", expected=0):
+        return run("make", "-C", str(build), "-j4", target, expected=expected)
+
+    def unpopulated(path):
+        # ExternalProject recreates empty directories during configuration.
+        return not path.exists() or not any(path.iterdir())
+
+    prefix = build / "toolchain/toolchain-example-prefix"
+    source = prefix / "src/toolchain-example"
+    binary = prefix / "src/toolchain-example-build"
+    installed = build / "install/toolchain/example/bin/example"
+    state = build / "toolchain/toolchain-example-installed-state.json"
+    descriptor = build / "toolchain/toolchain-example-lifecycle.json"
+
+    def probe(expected):
+        def snapshot():
+            return {path: (path.stat().st_mtime_ns, path.stat().st_size)
+                    for path in build.rglob("*") if path.is_file()}
+        before = snapshot()
+        assert run(str(repository / "toolchain/installed-state"), "probe", str(descriptor)).strip() == expected
+        assert snapshot() == before, "Read-only installation probe modified the build tree"
+
+    control = build / "control"
+    control.mkdir(parents=True)
+    configure()
+    probe("build")
+    # An empty cache cannot be pruned or acquire an installation record.
+    assert "refusing to prune incomplete" in make("toolchain-example-prune", expected=2)
+    assert not state.exists()
+    for phase in ("configure", "build", "install"):
+        marker = control / ("fail-" + phase)
+        marker.touch()
+        output = make(expected=2)
+        assert "Intentional " + phase + " failure" in output, output
+        assert not state.exists()
+        configure()
+        assert "Intentional " + phase + " failure" in make(expected=2)
+        marker.unlink()
+    make()
+    probe("pending")
+    assert run(str(installed)).strip() == "1"
+    # Records with compiler fingerprints retain unrelated objects while
+    # rebuilding the affected target and republishing its installation.
+    reusable = binary / "CMakeFiles/reusable.dir/reusable.c.o"
+    reusable_time = reusable.stat().st_mtime_ns
+    sentinel = binary / "retained-build-state"
+    sentinel.write_text("retain configured build state\n")
+    for value in (2, 1):
+        configure(value=value)
+        probe("build")
+        output = make()
+        assert "retaining configured build tree for incremental recovery" in output, output
+        assert run(str(installed)).strip() == str(value)
+        assert reusable.stat().st_mtime_ns == reusable_time
+        assert sentinel.read_text() == "retain configured build state\n"
+    # Compiler selection remains a reason to replace the configured build tree.
+    original_compiler = json.loads(descriptor.read_text())["compilers"]["C"]["COMPILER"]
+    selected_compiler = root / "selected compiler"
+    selected_compiler.symlink_to(original_compiler)
+    next((build / "CMakeFiles").glob("*/CMakeCCompiler.cmake")).unlink()
+    configure(1, 2, "-DCMAKE_C_COMPILER=" + str(selected_compiler))
+    output = make()
+    assert "retaining configured build tree" not in output, output
+    assert not sentinel.exists()
+    compiler_entry = next(line for line in (binary / "CMakeCache.txt").read_text().splitlines()
+                          if line.startswith("CMAKE_C_COMPILER:"))
+    assert compiler_entry.split("=", 1)[1] == str(selected_compiler), compiler_entry
+    # Replacing the executable at the same path is visible even though CMake
+    # retains the old compiler version in its detection metadata.
+    before_compiler = json.loads(descriptor.read_text())["identity"]["compilers"]
+    sentinel.write_text("discard after compiler replacement\n")
+    selected_compiler.unlink()
+    selected_compiler.write_text('#!/bin/sh\nexec "' + original_compiler + '" "$@"\n')
+    selected_compiler.chmod(0o755)
+    configure(1, 2, "-DCMAKE_C_COMPILER=" + str(selected_compiler))
+    assert json.loads(descriptor.read_text())["identity"]["compilers"] != before_compiler
+    # The guard will invalidate objects even though a dry run need not print a
+    # build step: replacing this compiler changed only the lifecycle contract.
+    probe("build")
+    output = make()
+    assert "retaining configured build tree" not in output, output
+    assert not sentinel.exists()
+    next((build / "CMakeFiles").glob("*/CMakeCCompiler.cmake")).unlink()
+    configure(1, 2, "-DCMAKE_C_COMPILER=" + original_compiler)
+    make()
+    # Legacy records without compiler attestation must establish fresh objects.
+    record = json.loads(state.read_text())
+    record["identity"].pop("compilers")
+    state.write_text(json.dumps(record))
+    sentinel.write_text("discard unverified legacy compiler state\n")
+    probe("build")
+    output = make()
+    assert "retaining configured build tree" not in output, output
+    assert not sentinel.exists()
+    state.unlink()
+    sentinel.write_text("discard record-less compiler state\n")
+    probe("build")
+    assert "refusing to prune incomplete" in make("toolchain-example-prune", expected=2)
+    output = make()
+    assert "retaining configured build tree" not in output, output
+    assert not sentinel.exists()
+    state.unlink()
+    Path(json.loads(descriptor.read_text())["stamps"]["install"]).unlink()
+    sentinel.write_text("discard record-less objects even without an install stamp\n")
+    probe("build")
+    output = make()
+    assert "retaining configured build tree" not in output, output
+    assert not sentinel.exists()
+    first = {path: path.stat().st_mtime_ns for path in (installed, state)}
+    assert "Performing " not in make()
+    configure()
+    probe("pending")
+    assert "Performing " not in make()
+    assert first == {path: path.stat().st_mtime_ns for path in first}
+
+    # Input timestamp noise must not change the patch identity or installation.
+    os.utime(patch, None)
+    configure()
+    assert "Performing " not in make()
+    make("toolchain-example-prune")
+    assert not source.exists() and not binary.exists()
+    assert json.loads(state.read_text())["pruned"]
+    configure()
+    probe("reuse")
+    assert "Performing " not in make()
+    assert run(str(installed)).strip() == "1"
+    assert installed.stat().st_mtime_ns == first[installed]
+
+    # Selecting the same shell through another path changes source-step recipes,
+    # not installed inputs. Neither deleted sources nor a reinstall are needed.
+    selected_shell = root / "selected shell"
+    selected_shell.symlink_to(shutil.which("bash"))
+    configure(1, 2, "-DREAVEROS_HOST_BASH=" + str(selected_shell))
+    assert "Performing " not in make()
+    assert unpopulated(source) and unpopulated(binary)
+    assert installed.stat().st_mtime_ns == first[installed]
+    # Old completion records adopt fingerprints without forcing a source replay.
+    old_record = json.loads(state.read_text())
+    old_record.pop("inputs")
+    state.write_text(json.dumps(old_record))
+    configure(1, 2, "-DREAVEROS_HOST_BASH=" + shutil.which("bash"))
+    assert "Performing " not in make()
+    assert "inputs" in json.loads(state.read_text())
+    assert unpopulated(source) and unpopulated(binary)
+
+    # Changing the primary CMake executable can invalidate earlier recipes too.
+    contract = json.loads((build / "toolchain/toolchain-example-lifecycle.json").read_text())
+    for step in ("mkdir", "download"):
+        Path(contract["stamps"][step]).unlink()
+    assert "Performing " not in make()
+    assert unpopulated(source) and unpopulated(binary)
+    assert installed.stat().st_mtime_ns == first[installed]
+
+    # Generated step metadata can change without removing any output stamp.
+    metadata = prefix / "src/toolchain-example-stamp/toolchain-example-urlinfo.txt"
+    assert metadata.is_file()
+    metadata.touch()
+    assert "Performing " not in make()
+    assert unpopulated(source) and unpopulated(binary)
+    assert installed.stat().st_mtime_ns == first[installed]
+
+    # A scheduling-only change preserves a pruned installation.
+    assert json.loads(state.read_text())["pruned"], (state.read_text(), list(binary.iterdir()))
+    configure(jobs=8)
+    probe("reuse")
+    assert "Performing " not in make()
+    assert installed.stat().st_mtime_ns == first[installed]
+    configure(value=2, jobs=8)
+    assert "recovering changed installed inputs" in make()
+    assert run(str(installed)).strip() == "2"
+    assert not json.loads(state.read_text())["pruned"]
+    patch.write_text("patch version two\n")
+    configure(value=2, jobs=8)
+    assert "recovering changed installed inputs" in make()
+    assert run(str(installed)).strip() == "2"
+
+    # Missing output recovery handles both ordinary and pruned installations.
+    installed.unlink()
+    probe("install")
+    assert "recovering missing installed outputs" in make()
+    assert run(str(installed)).strip() == "2"
+    make("toolchain-example-prune")
+    installed.unlink()
+    probe("build")
+    assert "recovering missing installed outputs" in make()
+    assert run(str(installed)).strip() == "2"
+    state.unlink()
+    probe("build")
+    assert "recovering changed installed inputs" in make()
+    assert state.exists()
+
+    # A new source identity cannot inherit the old installed artifacts.
+    main = package / "main.c"
+    main.write_text(main.read_text().replace("TEST_VALUE);", "TEST_VALUE + 10);"))
+    with tarfile.open(archive, "w") as stream:
+        stream.add(package, arcname="package")
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    configure(value=2, jobs=8)
+    assert "recovering changed installed inputs" in make()
+    assert run(str(installed)).strip() == "12"
+
+    # A helper fingerprint change must restore pruned trees before replay,
+    # even when source/patch/configuration identity is otherwise unchanged.
+    make("toolchain-example-prune")
+    contract = json.loads((build / "toolchain/toolchain-example-lifecycle.json").read_text())
+    helper_input = build / "toolchain/toolchain-example-invalidation-inputs"
+    assert str(helper_input) in contract["legacy_inputs"]
+    helper_input.write_text(helper_input.read_text() + "changed helper fingerprint\n")
+    Path(contract["stamps"]["prune"]).unlink()
+    assert "refusing to prune incomplete" in make("toolchain-example-prune", expected=2)
+    assert "recovering changed installed inputs" in make()
+    assert run(str(installed)).strip() == "12"
+    assert source.exists() and binary.exists()
+    assert not json.loads(state.read_text())["pruned"]
+
+    # A prior completion record cannot bless an interrupted install attempt.
+    contract = json.loads((build / "toolchain/toolchain-example-lifecycle.json").read_text())
+    Path(contract["stamps"]["install"]).unlink()
+    assert "refusing to prune incomplete" in make("toolchain-example-prune", expected=2)
+    assert source.exists() and binary.exists()
+    make()
+
+    # Conflicts in one invocation fail even when earlier requested targets
+    # finish: the project lease covers the entire Make invocation.
+    output = run("make", "-C", str(build), "-j4", "toolchain-example-install",
+        "toolchain-example-prune", expected=2)
+    assert "conflicting operation" in output, output
+    assert installed.exists()
+
+with tempfile.TemporaryDirectory(prefix="toolchain directory aliases ") as temporary:
+    root = Path(temporary)
+    archive = root / "package.tar"
+    with tarfile.open(archive, "w") as stream:
+        stream.add(fixture / "package", arcname="package")
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    patch = root / "patch"
+    patch.write_text("unchanged patch\n")
+    for kind in ("build", "ancestor"):
+        actual = root / (kind + " actual")
+        actual.mkdir()
+        alias = root / (kind + " alias")
+        alias.symlink_to(actual, target_is_directory=True)
+        build = alias if kind == "build" else alias / "build"
+        (build / "control").mkdir(parents=True)
+        command = ["cmake", "-S", str(fixture), "-B", str(build), "-G", "Unix Makefiles",
+            "-DTEST_REPOSITORY=" + str(repository), "-DTEST_ARCHIVE=" + str(archive),
+            "-DTEST_ARCHIVE_HASH=" + digest, "-DTEST_PATCH_INPUT=" + str(patch),
+            "-DTEST_VALUE=1", "-DTEST_JOBS=2"]
+        run(*command)
+        run("make", "-C", str(build), "-j4", "toolchain-example-install")
+        installed = build / "install/toolchain/example/bin/example"
+        assert run(str(installed)).strip() == "1"
+        timestamp = installed.stat().st_mtime_ns
+        run("make", "-C", str(build), "toolchain-example-prune")
+        run(*command)
+        assert "Performing " not in run("make", "-C", str(build), "toolchain-example-install")
+        assert installed.stat().st_mtime_ns == timestamp
+
+        # Accepting directory aliases must not permit a symlinked stamp file.
+        contract = json.loads((build / "toolchain/toolchain-example-lifecycle.json").read_text())
+        stamp = Path(contract["stamps"]["configure"])
+        saved = root / (kind + " saved stamp")
+        stamp.rename(saved)
+        stamp.symlink_to(saved)
+        output = run("make", "-C", str(build), "toolchain-example-install", expected=2)
+        assert "invalid configure stamp" in output, output
+        stamp.unlink()
+        saved.rename(stamp)
+        run(*command, "-DTEST_VALUE=2")
+        assert "recovering changed installed inputs" in run(
+            "make", "-C", str(build), "toolchain-example-install")
+        assert run(str(installed)).strip() == "2"
+
+print("Toolchain contracts validate completion, read-only probes, aliases, legacy recovery, failures, pruned reuse, configuration/patch inputs, and missing outputs.")

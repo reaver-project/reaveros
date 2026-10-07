@@ -1,0 +1,6 @@
+# After compiler initialization, ordinary checks should exercise executable
+# links. Preserve a caller's explicit try_compile target-type selection.
+if (_reaveros_bootstrap_probes)
+    unset(CMAKE_TRY_COMPILE_TARGET_TYPE)
+    unset(_reaveros_bootstrap_probes)
+endif()

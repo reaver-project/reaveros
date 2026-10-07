@@ -1,0 +1,165 @@
+#!/usr/bin/env python3
+
+from pathlib import Path
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+
+
+if len(sys.argv) != 2:
+    sys.exit("usage: test-kernel-components <configured superbuild with installed tools>")
+root = Path(sys.argv[1]).resolve()
+repository = Path(__file__).resolve().parents[3]
+cmake = root / "install/toolchain/cmake/bin/cmake"
+toolchain = root / "install/toolchain/files/amd64-freestanding.cmake"
+
+
+def run(*command):
+    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    assert result.returncode == 0, result.stdout
+    assert "jobserver unavailable" not in result.stdout, result.stdout
+    return result.stdout
+
+
+# The isolated child builds consume the actual freestanding libraries and patched
+# tools. Source mutations below affect copies, including in read-only CI mounts.
+run(str(cmake), "--build", str(root), "--target", "kernel-amd64", "--parallel", "8")
+with tempfile.TemporaryDirectory(prefix="kernel component checks with spaces ", dir=root) as temporary:
+    temporary = Path(temporary)
+    source = temporary / "kernel"
+    shutil.copytree(repository / "kernel", source)
+    interface = temporary / "install/kernel-interface/amd64"
+    hosted = temporary / "install/sysroots/amd64-hosted"
+    vdso_file = hosted / "usr/lib/libvdso.so"
+    bootinit_file = temporary / "install/bootinit/amd64/bootinit"
+    producer = temporary / "vdso-build"
+    bootinit = temporary / "bootinit-build"
+    kernel = temporary / "kernel-build"
+
+    def configure(component, binary, *options):
+        run(str(cmake), "-S", str(component), "-B", str(binary), "-G", "Unix Makefiles",
+            "-DCMAKE_TOOLCHAIN_FILE=" + str(toolchain), "-DREAVEROS_ARCH=amd64",
+            "-DCMAKE_BUILD_TYPE=Release", *options)
+
+    def build(binary):
+        return run("make", "-C", str(binary), "-j8")
+
+    def install(binary, name):
+        run(str(cmake), "-DREAVEROS_BUILD_ROOT=" + str(temporary),
+            "-DREAVEROS_INSTALL_PROJECT=" + name,
+            "-DREAVEROS_INSTALL_BINARY_DIR=" + str(binary),
+            "-DREAVEROS_INSTALL_CMAKE=" + str(cmake),
+            "-P", str(repository / "cmake/install_component.cmake"))
+
+    def update_producer():
+        build(producer)
+        install(producer, "vdso-amd64")
+
+    def update_bootinit():
+        build(bootinit)
+        install(bootinit, "bootinit-amd64")
+
+    configure(source / "vdso", producer, "-DCMAKE_INSTALL_PREFIX=" + str(interface),
+        "-DREAVEROS_HOSTED_SYSROOT=" + str(hosted),
+        "-DREAVEROS_THORN=" + str(root / "install/toolchain/thorn/bin/thorn"))
+    update_producer()
+    configure(source / "bootinit", bootinit,
+        "-DCMAKE_INSTALL_PREFIX=" + str(bootinit_file.parent),
+        "-DREAVEROS_KERNEL_INTERFACE_ROOT=" + str(interface))
+    update_bootinit()
+    configure(source, kernel, "-DREAVEROS_KERNEL_INTERFACE_ROOT=" + str(interface),
+        "-DREAVEROS_KERNEL_VDSO_FILE=" + str(vdso_file),
+        "-DREAVEROS_BOOTINIT_FILE=" + str(bootinit_file))
+    build(kernel)
+
+    def object_times():
+        result = {path: path.stat().st_mtime_ns for path in kernel.rglob("*.obj")}
+        assert result, "No kernel objects were tracked"
+        return result
+
+    vdso_object = kernel / "CMakeFiles/vdso-incbin.dir/incbin_vdso.asm.obj"
+    bootinit_object = kernel / "CMakeFiles/bootinit-incbin.dir/incbin_bootinit.asm.obj"
+    output = kernel / "kernel-elf"
+    tracked = [*object_times(), output, kernel / "kernel", vdso_file, bootinit_file,
+        interface / "kernel-sources.txt", interface / "vdso_symbols.lds"]
+    before = {path: path.stat().st_mtime_ns for path in tracked}
+    update_producer()
+    update_bootinit()
+    build(kernel)
+    assert before == {path: path.stat().st_mtime_ns for path in tracked}, "Unchanged components rebuilt"
+
+    # Thorn outputs and the required linker fragment recover individually.
+    generated = list((producer / "thorn").rglob("*.h")) + list((producer / "thorn").rglob("*.cpp"))
+    for path in generated + [producer / "vdso_symbols.lds"]:
+        path.unlink()
+        update_producer()
+        assert path.is_file() and vdso_file.is_file(), path
+
+    # The current Thorn entry point consumes meta.thorn. Exercise a real
+    # declaration change without extending the compiler's module input model.
+    definitions = source / "vdso/meta.thorn"
+    original = definitions.read_text()
+    definitions.write_text(original + "\nenum dependency_probe_state(ready);\n")
+    update_producer()
+    for header in (interface / "generated/user/meta.h", hosted / "usr/include/rose/syscall/meta.h"):
+        assert "dependency_probe_state" in header.read_text()
+    update_bootinit()
+    build(kernel)
+    definitions.write_text(original)
+    update_producer()
+    assert "dependency_probe_state" not in (interface / "generated/user/meta.h").read_text()
+    update_bootinit()
+    build(kernel)
+
+    # Source-catalog changes must reconfigure the consumer. Feed an additional
+    # generated input directly, independently of Thorn's current single module.
+    catalog = interface / "kernel-sources.txt"
+    original_catalog = catalog.read_text()
+    extra_source = interface / "generated/kernel/dependency_probe.cpp"
+    extra_source.write_text("namespace kernel { int dependency_probe() { return 37; } }\n")
+    catalog.write_text(original_catalog + "generated/kernel/dependency_probe.cpp\n")
+    build(kernel)
+    assert "dependency_probe.cpp.obj" in (kernel / "CMakeFiles/syscall_table.dir/link.txt").read_text()
+    catalog.write_text(original_catalog)
+    extra_source.unlink()
+    build(kernel)
+    assert "dependency_probe.cpp.obj" not in (kernel / "CMakeFiles/syscall_table.dir/link.txt").read_text()
+
+    # Bootinit changes update its embedding and relink without recompiling
+    # unrelated kernel objects or the vDSO embedding.
+    time.sleep(1.1)
+    before = object_times()
+    old_link = output.stat().st_mtime_ns
+    main = source / "bootinit/main.cpp"
+    main.write_text(main.read_text() + '\nextern "C" { [[gnu::used]] volatile int '
+        'reaveros_bootinit_dependency_probe = 37; }\n')
+    update_bootinit()
+    build(kernel)
+    after = object_times()
+    assert before[bootinit_object] != after[bootinit_object]
+    assert all(after[path] == stamp for path, stamp in before.items() if path != bootinit_object)
+    assert output.stat().st_mtime_ns != old_link
+
+    time.sleep(1.1)
+    before = object_times()
+    old_link = output.stat().st_mtime_ns
+    os.utime(vdso_file, None)
+    build(kernel)
+    after = object_times()
+    assert before[vdso_object] != after[vdso_object]
+    assert all(after[path] == stamp for path, stamp in before.items() if path != vdso_object)
+    assert output.stat().st_mtime_ns != old_link
+
+    # Restore missing installed prerequisites through their actual installers.
+    for path in (vdso_file, interface / "kernel-sources.txt", interface / "vdso_symbols.lds",
+                 interface / "generated/user/meta.h", bootinit_file):
+        path.unlink()
+        update_producer()
+        update_bootinit()
+        build(kernel)
+        assert path.is_file(), path
+
+print("Kernel components preserve no-op builds, definition/catalog changes, deletion recovery, and independent embedding dependencies.")

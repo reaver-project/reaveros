@@ -12,9 +12,10 @@ add_executable(logger
 set_target_properties(logger
     PROPERTIES
         SUFFIX ".srv"
-        COMPILE_FLAGS "-g -fno-rtti"
 )
+target_compile_options(logger PRIVATE -g -fno-rtti)
+reaveros_require_linker_dependencies(logger CXX)
 
 install(TARGETS logger
-    DESTINATION ${CMAKE_INSTALL_PREFIX}
+    DESTINATION .
 )

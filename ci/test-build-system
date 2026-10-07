@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $# -ne 1 || -z ${BUILD_ENVIRONMENT_IMAGE:-} ]]
+then
+    printf 'usage: %s <compiled job> (with BUILD_ENVIRONMENT_IMAGE)\n' "$0" >&2
+    exit 2
+fi
+
+architecture=$(jq --exit-status --raw-output '.tags.architecture' <<< "$1")
+repo_root=$(git rev-parse --show-toplevel)
+docker run --rm \
+    --volume "${repo_root}:/reaveros:ro" \
+    "${BUILD_ENVIRONMENT_IMAGE}" \
+    /usr/bin/env bash -c '
+        set -euo pipefail
+        architecture=$1
+        # The admitted checkout is mounted read-only with the runner UID.
+        git config --global --add safe.directory /reaveros
+        export PATH="/build/install/toolchain/cmake/bin:${PATH}"
+        cmake -S /reaveros -B /build -DREAVEROS_ENABLE_UNIT_TESTS=ON \
+            -DREAVEROS_ARCHITECTURES="${architecture}"
+        exec /reaveros/ci/tests/build-system/run /build "${architecture}"
+    ' -- "${architecture}"

@@ -1,5 +1,15 @@
 cmake_minimum_required(VERSION 3.31)
-project(reaveros-meta C CXX)
+if (NOT CMAKE_GENERATOR STREQUAL "Unix Makefiles")
+    message(FATAL_ERROR "Unsupported CMake generator '${CMAKE_GENERATOR}'.\nReaverOS requires GNU Make. Configure with -G 'Unix Makefiles'.")
+endif()
+project(reaveros-meta LANGUAGES NONE)
+execute_process(COMMAND "${CMAKE_MAKE_PROGRAM}" --version
+    RESULT_VARIABLE _reaveros_make_result OUTPUT_VARIABLE _reaveros_make_version
+    ERROR_QUIET TIMEOUT 10)
+if (NOT _reaveros_make_result EQUAL 0 OR NOT _reaveros_make_version MATCHES "^GNU Make ")
+    message(FATAL_ERROR "ReaverOS requires GNU Make; selected '${CMAKE_MAKE_PROGRAM}' is unsupported.")
+endif()
+enable_language(C CXX)
 
 set(REAVEROS_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 set(REAVEROS_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR})
@@ -33,33 +43,60 @@ if (NOT GIT_EXECUTABLE OR NOT GIT_VERSION_STRING)
 endif()
 
 include(ExternalProject)
+include(toolchain/targets.cmake)
 
 set(_REAVEROS_CONFIGURE_HANDLED_BY_BUILD CONFIGURE_HANDLED_BY_BUILD TRUE)
 
-set(REAVEROS_ARCHITECTURES "amd64" CACHE STRING "List of architectures to build for. Possible values: amd64.")
-set(REAVEROS_LOADERS "uefi" CACHE STRING "List of loaders to build images with. Possible values: uefi (amd64 only).")
+set(REAVEROS_ARCHITECTURES "amd64" CACHE STRING "List of target CPU architectures to enable. Possible values: amd64.")
+set(REAVEROS_LOADERS "uefi" CACHE STRING "List of bootloaders to enable. Possible values: uefi (amd64 only).")
+
+function(_reaveros_validate_selection _name)
+    set(_seen_values "")
+    foreach (_value IN LISTS ${_name})
+        if (NOT _value IN_LIST ARGN)
+            message(FATAL_ERROR "Unsupported value '${_value}' for ${_name}. Supported values: ${ARGN}.")
+        endif()
+        if (_value IN_LIST _seen_values)
+            message(FATAL_ERROR "Duplicate value '${_value}' in ${_name}.")
+        endif()
+        list(APPEND _seen_values "${_value}")
+    endforeach()
+endfunction()
+
+if ("${REAVEROS_ARCHITECTURES}" STREQUAL "")
+    message(FATAL_ERROR "REAVEROS_ARCHITECTURES must select at least one target CPU architecture.")
+endif()
+_reaveros_validate_selection(REAVEROS_ARCHITECTURES ${_reaveros_architectures})
+_reaveros_validate_selection(REAVEROS_LOADERS uefi)
 
 include(cmake/target_functions.cmake)
+reaveros_require_host_python()
+reaveros_require_host_tools("Toolchain helpers and kernel symbol extraction" bash tail grep awk)
 
 reaveros_add_aggregate_targets("")
 add_custom_target(all-toolchain)
 
-option(REAVEROS_ENABLE_UNIT_TESTS OFF)
-if (REAVEROS_ENABLE_UNIT_TESTS)
-    set(_REAVEROS_TEST_TARGET test)
-endif()
+option(REAVEROS_ENABLE_UNIT_TESTS "Enable unit tests for project components." OFF)
 
 reaveros_add_aggregate_targets(kernels)
 reaveros_add_aggregate_targets_with_modes(libraries)
 
 add_subdirectory(toolchain)
 
-set(_saved "${CMAKE_CURRENT_BINARY_DIR}")
-set(CMAKE_CURRENT_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/kernel")
-reaveros_include_component(kernel "" kernels)
-set(CMAKE_CURRENT_BINARY_DIR "${_saved}")
+# Dependencies can refer to these before their producers are registered after
+# libraries. This preserves the existing hosted/freestanding bootstrap order.
+foreach (_architecture IN LISTS REAVEROS_ARCHITECTURES)
+    add_custom_target(kernel-interface-${_architecture})
+    add_custom_target(kernel-bootinit-${_architecture})
+endforeach()
+
+reaveros_include_component(kernel
+    BINARY_ROOT "${CMAKE_CURRENT_BINARY_DIR}/kernel"
+    TAGS kernels
+)
 
 add_subdirectory(libraries)
+include(cmake/kernel_components.cmake)
 add_subdirectory(loaders)
 add_subdirectory(userspace)
 add_subdirectory(images)
@@ -79,9 +116,9 @@ if (REAVEROS_ENABLE_UNIT_TESTS)
 
         set(properties_for_trampoline
 "${properties_for_trampoline}
-set(component_directory_${component} ${BINARY_DIR})
-set(component_labels_${component} ${labels})
-set(component_names_${component} ${display_name})
+set(component_directory_${component} [==[${BINARY_DIR}]==])
+set(component_labels_${component} [==[${labels}]==])
+set(component_names_${component} [==[${display_name}]==])
 "
         )
     endforeach()
@@ -97,6 +134,8 @@ set(component_names_${component} ${display_name})
             TEST_INCLUDE_FILE "${_trampoline}"
     )
 
-    add_custom_target(run-tests ctest .)
+    add_custom_target(run-tests
+        COMMAND "${REAVEROS_CTEST}" --test-dir "${CMAKE_CURRENT_BINARY_DIR}"
+        VERBATIM)
     add_dependencies(run-tests all-build-tests)
 endif()

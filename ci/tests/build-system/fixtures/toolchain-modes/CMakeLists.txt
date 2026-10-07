@@ -1,0 +1,35 @@
+cmake_minimum_required(VERSION 3.31)
+set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+project(toolchain-modes-test C CXX ASM)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+add_library(mode-probe STATIC probe.c probe.cpp probe.asm)
+if (REAVEROS_BUILD_MODE STREQUAL "tests")
+    add_executable(c-runtime-probe c-runtime.c)
+    add_executable(cxx-runtime-probe cxx-runtime.cpp)
+    add_library(runtime-shared-probe SHARED cxx-runtime.cpp)
+endif()
+if (REAVEROS_BUILD_MODE STREQUAL "uefi")
+    target_compile_definitions(mode-probe PRIVATE EXPECT_WINDOWS_ABI)
+endif()
+
+if (TEST_LOOKUP_HOST)
+    find_library(_lookup_library NAMES reaveros-policy-probe
+        PATHS "${TEST_LOOKUP_HOST}/lib" /usr/lib NO_DEFAULT_PATH)
+    find_path(_lookup_include NAMES reaveros-policy-probe.h
+        PATHS "${TEST_LOOKUP_HOST}/include" /usr/include NO_DEFAULT_PATH)
+    find_program(_lookup_program NAMES reaveros-policy-probe
+        PATHS "${TEST_LOOKUP_HOST}/bin" /usr/bin NO_DEFAULT_PATH)
+    if (REAVEROS_BUILD_MODE STREQUAL "tests")
+        set(_target_root "${fake_sysroot}")
+    else()
+        set(_target_root "${CMAKE_SYSROOT}")
+    endif()
+    if (NOT _lookup_library STREQUAL "${_target_root}/usr/lib/libreaveros-policy-probe.a"
+            OR NOT _lookup_include STREQUAL "${_target_root}/usr/include"
+            OR NOT _lookup_program STREQUAL "${TEST_LOOKUP_HOST}/bin/reaveros-policy-probe")
+        message(FATAL_ERROR "Toolchain lookup chose the wrong host/target artifacts")
+    endif()
+endif()
+if (REAVEROS_IS_FREESTANDING)
+    target_compile_definitions(mode-probe PRIVATE EXPECT_FREESTANDING)
+endif()

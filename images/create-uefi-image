@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+
+import hashlib
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+from reproducibility import normalize_paths, packaging_environment
+
+
+# Allocation and directory-entry order are part of the image layout. Keep the
+# firmware fallback executable before the configuration's long-name entries.
+DIRECTORIES = ("EFI", "EFI/BOOT", "reaver")
+PAYLOADS = ("EFI/BOOT/BOOTX64.EFI", "EFI/BOOT/reaveros.conf", "reaver/kernel.img", "reaver/initrd.img")
+
+
+def main():
+    if len(sys.argv) != 9:
+        raise ValueError("usage: create-uefi-image <staging> <image> <bytes> <sector bytes> <fallocate> <mkfs> <mmd> <mcopy>")
+    staging, image = (Path(path).absolute() for path in sys.argv[1:3])
+    size, sector = sys.argv[3:5]
+    fallocate, mkfs, mmd, mcopy = sys.argv[5:]
+    env = packaging_environment()
+    normalize_paths(staging, (".", *DIRECTORIES, *PAYLOADS), int(env["SOURCE_DATE_EPOCH"]))
+    identity = hashlib.sha256(f"reaveros-fat-v1\0{size}\0{sector}\0{env['SOURCE_DATE_EPOCH']}\0".encode())
+    for name in PAYLOADS:
+        identity.update(name.encode() + b"\0")
+        digest = hashlib.sha256()
+        with (staging / name).open("rb") as stream:
+            for block in iter(lambda: stream.read(65536), b""):
+                digest.update(block)
+        identity.update(digest.digest())
+    volume_id = identity.hexdigest()[:8]
+
+    # Command-line image paths avoid mtools' drive mappings. Reset storage/name
+    # switches after all configuration files have been parsed by pinned mtools.
+    env = {key: value for key, value in env.items() if not key.startswith("MTOOLS_")}
+    env.update(MTOOLSRC="/dev/null", MTOOLS_SKIP_CHECK="0", MTOOLS_FAT_COMPATIBILITY="0",
+        MTOOLS_LOWER_CASE="0", MTOOLS_NO_VFAT="0", MTOOLS_NAME_NUMERIC_TAIL="1",
+        MTOOLS_DOTTED_DIR="0", MTOOLS_RATE_0="0", MTOOLS_RATE_ANY="0", DEFAULT_CODEPAGE="850")
+    temporary = Path(str(image) + ".tmp")
+    relative_image = os.path.relpath(temporary, staging)
+    try:
+        temporary.unlink(missing_ok=True)
+        subprocess.run([fallocate, "-l", size, str(temporary)], env=env, check=True)
+        # --invariant sets the ID as well as creation-time defaults; -i follows
+        # it so the pinned formatter keeps our content-derived identity.
+        subprocess.run([mkfs, "--invariant", "-i", volume_id, str(temporary)], env=env, check=True)
+        subprocess.run([sys.executable, str(Path(__file__).with_name("check-fat-capacity")),
+            str(temporary), str(staging), size, sector], env=env, check=True)
+        subprocess.run([mmd, "-i", relative_image, *("::/" + name for name in DIRECTORIES)],
+            cwd=staging, env=env, check=True)
+        for name in PAYLOADS:
+            subprocess.run([mcopy, "-o", "-i", relative_image, name, "::/" + name],
+                cwd=staging, env=env, check=True)
+        temporary.replace(image)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+try:
+    main()
+except (OSError, ValueError, subprocess.CalledProcessError) as error:
+    sys.exit("UEFI packaging: " + str(error))

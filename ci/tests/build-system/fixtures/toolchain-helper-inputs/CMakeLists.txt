@@ -1,0 +1,9 @@
+cmake_minimum_required(VERSION 3.31)
+project(toolchain-helper-inputs-test NONE)
+
+include(ExternalProject)
+include("${TEST_REPOSITORY}/cmake/target_functions.cmake")
+set(REAVEROS_SOURCE_DIR "${TEST_HELPERS}")
+set(REAVEROS_BINARY_DIR "${CMAKE_BINARY_DIR}")
+add_custom_target(all-toolchain-prune)
+add_subdirectory(toolchain)

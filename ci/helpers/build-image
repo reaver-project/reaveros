@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $# -lt 5 || $# -gt 6 ]]
+then
+    printf 'usage: %s <architecture> <loader> <layout> <build-environment image> <artifact directory> [configuration]\n' "$0" >&2
+    exit 2
+fi
+
+architecture=$1
+loader=$2
+layout=$3
+build_environment=$4
+artifact_dir=$5
+configuration=${6:-}
+image=${loader}-${layout}-${architecture}
+self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+repo_root=$(git -C "${self_dir}" rev-parse --show-toplevel)
+
+if [[ ! ${architecture} =~ ^[a-z0-9-]+$ || ! ${loader} =~ ^[a-z0-9-]+$ ||
+    ! ${layout} =~ ^[a-z0-9-]+$ ]]
+then
+    printf 'Invalid image coordinates: %s %s %s\n' \
+        "${architecture}" "${loader}" "${layout}" >&2
+    exit 2
+fi
+
+mkdir -p "${artifact_dir}"
+artifact_dir=$(cd -- "${artifact_dir}" && pwd)
+docker run --rm \
+    --volume "${repo_root}:/reaveros:ro" \
+    --volume "${artifact_dir}:/artifacts" \
+    "${build_environment}" \
+    /usr/bin/env bash -c '
+        set -euo pipefail
+        architecture=$1
+        loader=$2
+        image=$3
+        configuration=$4
+        cd /build
+        cmake /reaveros -DREAVEROS_ENABLE_UNIT_TESTS=ON \
+            -DREAVEROS_ARCHITECTURES="${architecture}" \
+            -DREAVEROS_LOADERS="${loader}" \
+            -DCMAKE_BUILD_TYPE="${configuration}"
+        make "image-${image}" -j"$(nproc)"
+        cp "install/images/${image}.img" /artifacts/
+    ' -- "${architecture}" "${loader}" "${image}" "${configuration}"

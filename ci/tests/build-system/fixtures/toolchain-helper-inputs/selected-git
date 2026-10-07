@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "${TEST_SELECTED_GIT_LOG}"
+exec "${TEST_REAL_GIT}" "$@"

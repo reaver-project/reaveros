@@ -1,6 +1,4 @@
-file(GLOB sources *.cpp)
-
-add_definitions(-g)
+file(GLOB sources CONFIGURE_DEPENDS *.cpp)
 
 if (REAVEROS_IS_FREESTANDING)
     set(_library_type STATIC)
@@ -11,9 +9,11 @@ endif()
 add_library(archive ${_library_type}
     ${sources}
 )
-
-set(install_dir ${CMAKE_INSTALL_PREFIX}/usr/lib)
+target_compile_options(archive PRIVATE -g)
+if (_library_type STREQUAL "SHARED")
+    reaveros_require_linker_dependencies(archive CXX)
+endif()
 
 install(TARGETS archive
-    DESTINATION ${install_dir}
+    DESTINATION usr/lib
 )

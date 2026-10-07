@@ -13,6 +13,7 @@ repository=$2
 tag=$3
 revision=$4
 archive=$(realpath -m -- "$5")
+git_executable=${GIT_EXECUTABLE:-git}
 
 if [[ ${source_directory} == / || ! ${tag} =~ ^[[:alnum:]_.-]+$ \
     || ! ${revision} =~ ^[0-9a-f]{40}$ || ! -f ${archive} \
@@ -24,24 +25,24 @@ fi
 
 if [[ ! -d ${source_directory}/.git ]]
 then
-    git clone --filter=blob:none --no-checkout --depth=1 --branch "${tag}" \
+    "${git_executable}" clone --filter=blob:none --no-checkout --depth=1 --branch "${tag}" \
         -- "${repository}" "${source_directory}"
 fi
 
-if [[ $(git -C "${source_directory}" remote get-url origin) != "${repository}" ]]
+if [[ $("${git_executable}" -C "${source_directory}" remote get-url origin) != "${repository}" ]]
 then
     printf 'The source checkout has an unexpected origin.\n' >&2
     exit 1
 fi
 
-local_revision=$(git -C "${source_directory}" rev-parse --verify --quiet "refs/tags/${tag}^{commit}" || true)
+local_revision=$("${git_executable}" -C "${source_directory}" rev-parse --verify --quiet "refs/tags/${tag}^{commit}" || true)
 if [[ ${local_revision} != "${revision}" ]]
 then
-    git -C "${source_directory}" fetch --filter=blob:none --force --depth=1 \
+    "${git_executable}" -C "${source_directory}" fetch --filter=blob:none --force --depth=1 \
         origin "refs/tags/${tag}:refs/tags/${tag}"
 fi
 
-local_revision=$(git -C "${source_directory}" rev-parse --verify "refs/tags/${tag}^{commit}")
+local_revision=$("${git_executable}" -C "${source_directory}" rev-parse --verify "refs/tags/${tag}^{commit}")
 if [[ ${local_revision} != "${revision}" ]]
 then
     printf 'Tag %s resolves to %s, not configured revision %s.\n' \
@@ -52,18 +53,18 @@ fi
 find "${source_directory}" -mindepth 1 -maxdepth 1 ! -name .git \
     -exec rm -rf -- {} +
 tar -xf "${archive}" --no-same-owner --strip-components=1 -C "${source_directory}"
-git -C "${source_directory}" reset --mixed --quiet "${revision}"
+"${git_executable}" -C "${source_directory}" reset --mixed --quiet "${revision}"
 
 # Git archives expand this export-subst metadata file. Accept only the exact
 # expansion for the pinned commit and tag, then restore its tracked template.
 metadata_path=clang/bindings/python/.git_archival.txt
 metadata_file=${source_directory}/${metadata_path}
 if [[ -f ${metadata_file} ]] \
-    && ! git -C "${source_directory}" diff --quiet -- "${metadata_path}" \
-    && [[ $(git -C "${source_directory}" check-attr --cached export-subst -- "${metadata_path}") \
+    && ! "${git_executable}" -C "${source_directory}" diff --quiet -- "${metadata_path}" \
+    && [[ $("${git_executable}" -C "${source_directory}" check-attr --cached export-subst -- "${metadata_path}") \
         == "${metadata_path}: export-subst: set" ]]
 then
-    commit_date=$(git -C "${source_directory}" show -s --format=%cI "${revision}")
+    commit_date=$("${git_executable}" -C "${source_directory}" show -s --format=%cI "${revision}")
     if cmp -s "${metadata_file}" \
         <(printf 'node: %s\nnode-date: %s\ndescribe-name: %s\n' \
             "${revision}" "${commit_date}" "${tag}")
@@ -76,7 +77,7 @@ then
     fi
 fi
 
-if [[ -n $(git -C "${source_directory}" status --porcelain --ignored --untracked-files=all) ]]
+if [[ -n $("${git_executable}" -C "${source_directory}" status --porcelain --ignored --untracked-files=all) ]]
 then
     printf 'Archive contents do not match Git revision %s.\n' "${revision}" >&2
     exit 1

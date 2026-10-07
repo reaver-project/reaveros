@@ -1,17 +1,17 @@
+include("@REAVEROS_SOURCE_DIR@/cmake/ctest_discovery.cmake")
 set(components @components@)
 @properties_for_trampoline@
 
-function(add_test name path)
-    set(_test_name "${component_names_${component}} :: ${name}")
-    _add_test("${_test_name}" "${component_directory_${component}}/test/${path}")
-    set_tests_properties(${_test_name}
-        PROPERTIES
-            LABELS "${component_labels_${component}}"
-    )
-endfunction()
-
+if (NOT "${CTEST_CONFIGURATION_TYPE}" STREQUAL "")
+    set(_configuration "${CTEST_CONFIGURATION_TYPE}")
+else()
+    set(_configuration "@CMAKE_BUILD_TYPE@")
+endif()
 foreach (component IN LISTS components)
-    if (EXISTS "${component_directory_${component}}/test/CTestTestfile.cmake")
-        include("${component_directory_${component}}/test/CTestTestfile.cmake")
-    endif()
+    reaveros_import_native_tests(
+        COMPONENT "${component_names_${component}}"
+        BINARY_DIR "${component_directory_${component}}"
+        CTEST "@REAVEROS_CTEST@" CONFIGURATION "${_configuration}"
+        LABELS ${component_labels_${component}}
+    )
 endforeach()

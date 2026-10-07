@@ -15,7 +15,7 @@ then
     exit 2
 fi
 
-script="ci/jobs/${invoke}"
+script="ci/${invoke}"
 if [[ ! -x ${script} ]]
 then
     printf 'Matrix job script is not executable: %s\n' "${script}" >&2

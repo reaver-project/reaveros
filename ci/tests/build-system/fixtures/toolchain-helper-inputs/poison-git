@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'The unselected Git from PATH was invoked.\n' >&2
+exit 1
