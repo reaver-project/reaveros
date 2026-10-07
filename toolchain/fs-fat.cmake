@@ -30,8 +30,9 @@ _reaveros_ep_arguments(_dosfstools_configure _dosfstools_separator
         "${CMAKE_CURRENT_BINARY_DIR}/host-cc" <BINARY_DIR>/reaveros-cc
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
         "${CMAKE_CURRENT_BINARY_DIR}/host-cxx" <BINARY_DIR>/reaveros-cxx
-    COMMAND <SOURCE_DIR>/configure --prefix=<INSTALL_DIR>
-    "CC=./reaveros-cc" "CXX=./reaveros-cxx")
+    COMMAND "${CMAKE_COMMAND}" -E env "PATH=<BINARY_DIR>:$ENV{PATH}"
+    <SOURCE_DIR>/configure --prefix=<INSTALL_DIR>
+    "CC=reaveros-cc" "CXX=reaveros-cxx")
 ExternalProject_Add(toolchain-dosfstools
     GIT_REPOSITORY ${REAVEROS_DOSFSTOOLS_REPO}
     GIT_TAG ${REAVEROS_DOSFSTOOLS_TAG}
@@ -48,8 +49,8 @@ ExternalProject_Add(toolchain-dosfstools
 
     LIST_SEPARATOR "${_dosfstools_separator}"
     CONFIGURE_COMMAND ${_dosfstools_configure}
-    BUILD_COMMAND $(MAKE)
-    INSTALL_COMMAND $(MAKE) install
+    BUILD_COMMAND "${CMAKE_COMMAND}" -E env "PATH=<BINARY_DIR>:$ENV{PATH}" $(MAKE)
+    INSTALL_COMMAND "${CMAKE_COMMAND}" -E env "PATH=<BINARY_DIR>:$ENV{PATH}" $(MAKE) install
 )
 # The executable recipe includes scheduling-only launchers; installation identity
 # instead records the compiler and actual configure inputs.
@@ -72,9 +73,9 @@ _reaveros_ep_arguments(_mtools_configure _mtools_separator
         "${CMAKE_CURRENT_BINARY_DIR}/host-cc" <BINARY_DIR>/reaveros-cc
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
         "${CMAKE_CURRENT_BINARY_DIR}/host-cxx" <BINARY_DIR>/reaveros-cxx
-    COMMAND
+    COMMAND "${CMAKE_COMMAND}" -E env "PATH=<BINARY_DIR>:$ENV{PATH}"
     <SOURCE_DIR>/configure --prefix=<INSTALL_DIR>
-    "CC=./reaveros-cc" "CXX=./reaveros-cxx")
+    "CC=reaveros-cc" "CXX=reaveros-cxx")
 ExternalProject_Add(toolchain-mtools
     URL ${REAVEROS_MTOOLS_DIR}/${REAVEROS_MTOOLS_VER}
     URL_HASH SHA256=${REAVEROS_MTOOLS_SHA256}
@@ -89,8 +90,8 @@ ExternalProject_Add(toolchain-mtools
 
     LIST_SEPARATOR "${_mtools_separator}"
     CONFIGURE_COMMAND ${_mtools_configure}
-    BUILD_COMMAND $(MAKE)
-    INSTALL_COMMAND $(MAKE) install
+    BUILD_COMMAND "${CMAKE_COMMAND}" -E env "PATH=<BINARY_DIR>:$ENV{PATH}" $(MAKE)
+    INSTALL_COMMAND "${CMAKE_COMMAND}" -E env "PATH=<BINARY_DIR>:$ENV{PATH}" $(MAKE) install
 )
 set_property(TARGET toolchain-mtools PROPERTY _REAVEROS_CONFIGURATION_INPUTS
     "CC=${CMAKE_C_COMPILER}" "CXX=${CMAKE_CXX_COMPILER}" "prefix=<INSTALL_DIR>"

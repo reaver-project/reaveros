@@ -14,7 +14,7 @@ fixture = repository / "ci/tests/build-system/fixtures/component-install"
 
 def run(*command, expected=0, cwd=None):
     result = subprocess.run(command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    assert result.returncode == expected, result.stdout
+    assert result.returncode == expected, (command, cwd, result.stdout)
     assert "jobserver unavailable" not in result.stdout, result.stdout
     return result.stdout
 
@@ -76,7 +76,8 @@ with tempfile.TemporaryDirectory(prefix="external project arguments with spaces 
     assert (sysroot / "usr/include/renamed.h").is_file()
     assert "renamed.h" in owner.read_text()
 
-with tempfile.TemporaryDirectory(prefix="upstream arguments with 'quotes' ") as temporary:
+with tempfile.TemporaryDirectory(prefix="upstream arguments with 'quotes' ") as temporary, \
+        tempfile.TemporaryDirectory(prefix="autoconf arguments with spaces ") as autoconf_temporary:
     root = Path(temporary)
     log = root / "launcher log | __reaveros_list_separator__"
     launcher = ";".join((sys.executable,
@@ -111,9 +112,13 @@ with tempfile.TemporaryDirectory(prefix="upstream arguments with 'quotes' ") as 
             assert values["LLVM_ENABLE_PROJECTS"] == "clang;lld", values
             assert values["LLVM_RUNTIME_TARGETS"] == "default;x86_64-pc-reaveros-none;x86_64-pc-reaveros-elf", values
             assert values["RUNTIMES_default_LLVM_ENABLE_RUNTIMES"] == "compiler-rt;libunwind;libcxx;libcxxabi", values
-    autoconf_source = root / "autoconf source"
+    # Autoconf's own config.status does not escape source-path apostrophes.
+    # Keep its paths representable, while launcher argv retains quoted paths.
+    autoconf_root = Path(autoconf_temporary)
+    autoconf_source = autoconf_root / "source with spaces"
     autoconf_source.mkdir()
     (autoconf_source / "configure.ac").write_text("""AC_INIT([host-compiler-options], [1.0])
+AC_CONFIG_SRCDIR([configure.ac])
 AC_PROG_CC
 AC_PROG_CXX
 AC_LANG_PUSH([C])
@@ -132,13 +137,25 @@ AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
 ]], [[static_assert(REQUIRED_HOST_CXX_ARGUMENT == 41);]])],
 [], [AC_MSG_ERROR([Mandatory C++ compiler option lost])])
 AC_LANG_POP([C++])
+AC_CONFIG_FILES([Makefile subdir/Makefile])
 AC_OUTPUT
 """)
+    (autoconf_source / "Makefile.in").write_text("all:\n\t$(MAKE) -C subdir\n")
+    subdir = autoconf_source / "subdir"
+    subdir.mkdir()
+    (subdir / "Makefile.in").write_text('CC=@CC@\nCXX=@CXX@\nall:\n'
+        '\t$(CC) -c "@srcdir@/probe.c" -o probe.o\n'
+        '\t$(CXX) -c "@srcdir@/probe.cpp" -o probe-cxx.o\n')
+    for suffix, required, value in (("c", "REQUIRED_HOST_C_ARGUMENT", 37),
+                                    ("cpp", "REQUIRED_HOST_CXX_ARGUMENT", 41)):
+        (subdir / ("probe." + suffix)).write_text('#ifndef ' + required
+            + '\n#error Mandatory compiler option lost\n#endif\n'
+            + 'typedef int required_value[(' + required + ' == ' + str(value) + ') ? 1 : -1];\n')
     (autoconf_source / "autogen.sh").write_text("#!/bin/sh\nexec autoconf\n")
     (autoconf_source / "autogen.sh").chmod(0o755)
     run("autoconf", cwd=autoconf_source)
     for project in ("toolchain-dosfstools", "toolchain-mtools"):
-        build = root / (project + " configure with 'quotes'")
+        build = autoconf_root / (project + " configure with spaces")
         build.mkdir()
         substitutions = {"<SOURCE_DIR>": str(autoconf_source), "<BINARY_DIR>": str(build),
                          "<INSTALL_DIR>": str(build / "install")}
@@ -154,8 +171,14 @@ AC_OUTPUT
         for part in parts:
             run(*part, cwd=build)
         config_log = (build / "config.log").read_text()
-        assert "CC='./reaveros-cc'" in config_log, config_log
-        assert "CXX='./reaveros-cxx'" in config_log, config_log
+        assert "CC='reaveros-cc'" in config_log, config_log
+        assert "CXX='reaveros-cxx'" in config_log, config_log
+        build_command = records[project]["BUILD_COMMAND"]
+        for placeholder, value in substitutions.items():
+            build_command = [argument.replace(placeholder, value) for argument in build_command]
+        run(*(argument.replace("$(MAKE)", "make") for argument in build_command), cwd=build)
+        assert (build / "subdir/probe.o").is_file()
+        assert (build / "subdir/probe-cxx.o").is_file()
     calls = [json.loads(line) for line in log.read_text().splitlines()]
     assert len(calls) >= 10, calls
 
