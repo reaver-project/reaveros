@@ -8,7 +8,6 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
-import time
 
 
 repository = Path(__file__).resolve().parent.parent

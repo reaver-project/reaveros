@@ -4,6 +4,10 @@
 #ifndef REAVEROS_USER_CONFIGURATION
 #error User configuration-specific C++ flags were lost
 #endif
+#ifdef EXPECT_QUOTED_SYSROOT
+#include <reaveros-quoted-sysroot.h>
+static_assert(REAVEROS_QUOTED_SYSROOT == 37, "Quoted UEFI system include path");
+#endif
 static_assert(__cplusplus >= 202002L, "C++20 requirement");
 static_assert(sizeof(void *) == 8, "AMD64 pointer ABI");
 #ifdef EXPECT_WINDOWS_ABI

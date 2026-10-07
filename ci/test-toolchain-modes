@@ -153,4 +153,34 @@ with tempfile.TemporaryDirectory(prefix="mode checks with spaces ", dir=root) as
         "-DCMAKE_TOOLCHAIN_FILE=" + str(root / "install/toolchain/files/amd64-tests.cmake"),
         "-DCMAKE_C_STANDARD=17", "-DCMAKE_CXX_STANDARD=23")
 
+    # Compile a header available only through a sysroot containing apostrophes.
+    # Select the real identity/options files while overriding this fixture's root.
+    quoted_sysroot = Path(temporary) / "UEFI sysroot with 'quotes'"
+    includes = quoted_sysroot / "usr/include"
+    includes.mkdir(parents=True)
+    (includes / "reaveros-quoted-sysroot.h").write_text("#define REAVEROS_QUOTED_SYSROOT 37\n")
+    wrapper = Path(temporary) / "quoted-uefi-toolchain.cmake"
+    wrapper.write_text('set(_reaveros_toolchain_architecture amd64)\n'
+        'set(_reaveros_toolchain_mode uefi)\n'
+        'list(APPEND CMAKE_TRY_COMPILE_PLATFORM_VARIABLES TEST_TOOLCHAIN_ROOT TEST_QUOTED_SYSROOT)\n'
+        'include("${TEST_TOOLCHAIN_ROOT}/install/toolchain/files/identity.cmake")\n'
+        'set(CMAKE_SYSROOT "${TEST_QUOTED_SYSROOT}")\n'
+        'include("${TEST_TOOLCHAIN_ROOT}/install/toolchain/files/options.cmake")\n')
+    quoted_build = Path(temporary) / "quoted-uefi-build"
+    run(str(cmake), "-S", str(repository / "ci/fixtures/toolchain-modes"),
+        "-B", str(quoted_build), "-G", "Unix Makefiles", "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_TOOLCHAIN_FILE=" + str(wrapper), "-DTEST_TOOLCHAIN_ROOT=" + str(root),
+        "-DTEST_QUOTED_SYSROOT=" + str(quoted_sysroot),
+        "-DCMAKE_C_FLAGS=-DREAVEROS_USER_C=1 -DEXPECT_QUOTED_SYSROOT",
+        "-DCMAKE_CXX_FLAGS=-DREAVEROS_USER_CXX=1 -DEXPECT_QUOTED_SYSROOT",
+        "-DCMAKE_ASM_FLAGS=-Wa,--defsym,REAVEROS_USER_ASM=1",
+        "-DCMAKE_C_FLAGS_RELEASE=-DREAVEROS_USER_CONFIGURATION=1",
+        "-DCMAKE_CXX_FLAGS_RELEASE=-DREAVEROS_USER_CONFIGURATION=1",
+        "-DCMAKE_ASM_FLAGS_RELEASE=-Wa,--defsym,REAVEROS_CONFIGURATION_ASM=1")
+    run(str(cmake), "--build", str(quoted_build), "--parallel", "4")
+    for record in json.loads((quoted_build / "compile_commands.json").read_text()):
+        if record["file"].endswith((".c", ".cpp")):
+            assert "-isystem" + str(includes) in shlex.split(record["command"]), record
+    print("UEFI C/C++ compiles headers through apostrophe-containing system include paths.", flush=True)
+
 print("All four toolchain modes preserve caller flags and target ABI requirements.")

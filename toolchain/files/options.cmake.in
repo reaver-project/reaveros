@@ -28,7 +28,7 @@ if (REAVEROS_BUILD_MODE STREQUAL "uefi")
     add_compile_options("$<$<COMPILE_LANGUAGE:ASM>:--sysroot=${CMAKE_SYSROOT}>")
     # The Windows Clang option table under ReaverOS does not retain SYSTEM
     # classification for standard include directories. Keep it explicit.
-    add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:SHELL:-isystem '${CMAKE_SYSROOT}/usr/include'>")
+    add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:-isystem${CMAKE_SYSROOT}/usr/include>")
 elseif (REAVEROS_BUILD_MODE STREQUAL "tests")
     set(CMAKE_C_STANDARD_INCLUDE_DIRECTORIES "${fake_sysroot}/usr/include")
     set(CMAKE_CXX_STANDARD_INCLUDE_DIRECTORIES "${clang_target_dirs};${fake_sysroot}/usr/include")

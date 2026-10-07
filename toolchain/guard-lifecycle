@@ -71,6 +71,8 @@ os.setsid()
 null = os.open(os.devnull, os.O_RDWR)
 for descriptor in (0, 1, 2):
     os.dup2(null, descriptor)
+if null > 2:
+    os.close(null)
 # Do not retain stdout pipes or jobserver descriptors from the invoking recipe.
 for descriptor in os.listdir("/proc/self/fd"):
     number = int(descriptor)
@@ -78,6 +80,7 @@ for descriptor in os.listdir("/proc/self/fd"):
         try:
             os.close(number)
         except OSError:
+            # os.listdir's directory descriptor is already closed after listing.
             pass
 poll = select.poll()
 poll.register(owner_fd, select.POLLIN)
