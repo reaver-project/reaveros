@@ -66,21 +66,39 @@ target_rebuild_commands()
 }
 
 all_toolchain_commands=$(target_rebuild_commands all-toolchain)
-llvm_commands=$(target_rebuild_commands toolchain-llvm-install)
+
+llvm_rebuild_required()
+{
+    local recovery
+    recovery=$("${source_directory}/toolchain/installed-state" probe \
+        "${build_directory}/toolchain/toolchain-llvm-lifecycle.json")
+    case ${recovery} in
+        build) printf 'true\n' ;;
+        reuse|install) printf 'false\n' ;;
+        pending)
+            if grep --fixed-strings --quiet "Performing build step for 'toolchain-llvm'" \
+                <<< "$(target_rebuild_commands toolchain-llvm-install)"
+            then
+                printf 'true\n'
+            else
+                printf 'false\n'
+            fi
+            ;;
+        *) printf 'Unexpected LLVM recovery state: %s\n' "${recovery}" >&2; return 1 ;;
+    esac
+}
 
 all_toolchain=false
-llvm=false
+llvm=$(llvm_rebuild_required)
 if grep --extended-regexp --quiet \
     "Performing (download|update|patch|configure|build|install) step for '" \
     <<<"${all_toolchain_commands}"
 then
     all_toolchain=true
 fi
-if grep --fixed-strings --quiet \
-    "Performing build step for 'toolchain-llvm'" \
-    <<<"${llvm_commands}"
+if ${llvm}
 then
-    llvm=true
+    all_toolchain=true
 fi
 
 printf 'Toolchain rebuild required: %s\n' "${all_toolchain}"
@@ -98,7 +116,17 @@ then
     exit 0
 fi
 
-/usr/bin/env bash /reaveros/docker/prepare-build-environment
+/usr/bin/env bash "${source_directory}/docker/prepare-build-environment"
+# Package preparation may replace a compiler at the same path. Refresh its
+# fingerprint and the build graph before consuming the installation contract.
+cmake "${source_directory}" -DREAVEROS_ENABLE_UNIT_TESTS=ON \
+    "${cache_configuration[@]}"
+llvm=$(llvm_rebuild_required)
+if ${defer_llvm} && ${llvm}
+then
+    printf 'reaveros_update_result=deferred\n'
+    exit 0
+fi
 make all-toolchain -j"$(nproc)"
-/usr/bin/env bash /reaveros/docker/verify-build-environment-packages
+/usr/bin/env bash "${source_directory}/docker/verify-build-environment-packages"
 printf 'reaveros_update_result=updated\n'

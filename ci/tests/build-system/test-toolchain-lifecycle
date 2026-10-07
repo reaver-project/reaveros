@@ -51,9 +51,20 @@ with tempfile.TemporaryDirectory(prefix="toolchain state with spaces ") as tempo
     binary = prefix / "src/toolchain-example-build"
     installed = build / "install/toolchain/example/bin/example"
     state = build / "toolchain/toolchain-example-installed-state.json"
+    descriptor = build / "toolchain/toolchain-example-lifecycle.json"
+
+    def probe(expected):
+        def snapshot():
+            return {path: (path.stat().st_mtime_ns, path.stat().st_size)
+                    for path in build.rglob("*") if path.is_file()}
+        before = snapshot()
+        assert run(str(repository / "toolchain/installed-state"), "probe", str(descriptor)).strip() == expected
+        assert snapshot() == before, "Read-only installation probe modified the build tree"
+
     control = build / "control"
     control.mkdir(parents=True)
     configure()
+    probe("build")
     # An empty cache cannot be pruned or acquire an installation record.
     assert "refusing to prune incomplete" in make("toolchain-example-prune", expected=2)
     assert not state.exists()
@@ -67,6 +78,7 @@ with tempfile.TemporaryDirectory(prefix="toolchain state with spaces ") as tempo
         assert "Intentional " + phase + " failure" in make(expected=2)
         marker.unlink()
     make()
+    probe("pending")
     assert run(str(installed)).strip() == "1"
     # Records with compiler fingerprints retain unrelated objects while
     # rebuilding the affected target and republishing its installation.
@@ -76,13 +88,13 @@ with tempfile.TemporaryDirectory(prefix="toolchain state with spaces ") as tempo
     sentinel.write_text("retain configured build state\n")
     for value in (2, 1):
         configure(value=value)
+        probe("build")
         output = make()
         assert "retaining configured build tree for incremental recovery" in output, output
         assert run(str(installed)).strip() == str(value)
         assert reusable.stat().st_mtime_ns == reusable_time
         assert sentinel.read_text() == "retain configured build state\n"
     # Compiler selection remains a reason to replace the configured build tree.
-    descriptor = build / "toolchain/toolchain-example-lifecycle.json"
     original_compiler = json.loads(descriptor.read_text())["compilers"]["C"]["COMPILER"]
     selected_compiler = root / "selected compiler"
     selected_compiler.symlink_to(original_compiler)
@@ -103,6 +115,9 @@ with tempfile.TemporaryDirectory(prefix="toolchain state with spaces ") as tempo
     selected_compiler.chmod(0o755)
     configure(1, 2, "-DCMAKE_C_COMPILER=" + str(selected_compiler))
     assert json.loads(descriptor.read_text())["identity"]["compilers"] != before_compiler
+    # The guard will invalidate objects even though a dry run need not print a
+    # build step: replacing this compiler changed only the lifecycle contract.
+    probe("build")
     output = make()
     assert "retaining configured build tree" not in output, output
     assert not sentinel.exists()
@@ -114,12 +129,28 @@ with tempfile.TemporaryDirectory(prefix="toolchain state with spaces ") as tempo
     record["identity"].pop("compilers")
     state.write_text(json.dumps(record))
     sentinel.write_text("discard unverified legacy compiler state\n")
+    probe("build")
+    output = make()
+    assert "retaining configured build tree" not in output, output
+    assert not sentinel.exists()
+    state.unlink()
+    sentinel.write_text("discard record-less compiler state\n")
+    probe("build")
+    assert "refusing to prune incomplete" in make("toolchain-example-prune", expected=2)
+    output = make()
+    assert "retaining configured build tree" not in output, output
+    assert not sentinel.exists()
+    state.unlink()
+    Path(json.loads(descriptor.read_text())["stamps"]["install"]).unlink()
+    sentinel.write_text("discard record-less objects even without an install stamp\n")
+    probe("build")
     output = make()
     assert "retaining configured build tree" not in output, output
     assert not sentinel.exists()
     first = {path: path.stat().st_mtime_ns for path in (installed, state)}
     assert "Performing " not in make()
     configure()
+    probe("pending")
     assert "Performing " not in make()
     assert first == {path: path.stat().st_mtime_ns for path in first}
 
@@ -131,6 +162,7 @@ with tempfile.TemporaryDirectory(prefix="toolchain state with spaces ") as tempo
     assert not source.exists() and not binary.exists()
     assert json.loads(state.read_text())["pruned"]
     configure()
+    probe("reuse")
     assert "Performing " not in make()
     assert run(str(installed)).strip() == "1"
     assert installed.stat().st_mtime_ns == first[installed]
@@ -171,6 +203,7 @@ with tempfile.TemporaryDirectory(prefix="toolchain state with spaces ") as tempo
     # A scheduling-only change preserves a pruned installation.
     assert json.loads(state.read_text())["pruned"], (state.read_text(), list(binary.iterdir()))
     configure(jobs=8)
+    probe("reuse")
     assert "Performing " not in make()
     assert installed.stat().st_mtime_ns == first[installed]
     configure(value=2, jobs=8)
@@ -184,14 +217,17 @@ with tempfile.TemporaryDirectory(prefix="toolchain state with spaces ") as tempo
 
     # Missing output recovery handles both ordinary and pruned installations.
     installed.unlink()
+    probe("install")
     assert "recovering missing installed outputs" in make()
     assert run(str(installed)).strip() == "2"
     make("toolchain-example-prune")
     installed.unlink()
+    probe("build")
     assert "recovering missing installed outputs" in make()
     assert run(str(installed)).strip() == "2"
     state.unlink()
-    assert "adopted verified legacy installation" in make()
+    probe("build")
+    assert "recovering changed installed inputs" in make()
     assert state.exists()
 
     # A new source identity cannot inherit the old installed artifacts.
@@ -276,4 +312,4 @@ with tempfile.TemporaryDirectory(prefix="toolchain directory aliases ") as tempo
             "make", "-C", str(build), "toolchain-example-install")
         assert run(str(installed)).strip() == "2"
 
-print("Toolchain contracts validate completion, aliases, legacy adoption, failures, pruned reuse, configuration/patch inputs, and missing outputs.")
+print("Toolchain contracts validate completion, read-only probes, aliases, legacy recovery, failures, pruned reuse, configuration/patch inputs, and missing outputs.")

@@ -153,6 +153,21 @@ with tempfile.TemporaryDirectory(prefix="mode checks with spaces ", dir=root) as
         "-DCMAKE_TOOLCHAIN_FILE=" + str(root / "install/toolchain/files/amd64-tests.cmake"),
         "-DCMAKE_C_STANDARD=17", "-DCMAKE_CXX_STANDARD=23")
 
+    # Empty cache entries use project defaults rather than bypassing the minima.
+    empty_build = Path(temporary) / "empty-standards"
+    run(str(cmake), "-S", str(repository / "ci/tests/build-system/fixtures/toolchain-modes"),
+        "-B", str(empty_build), "-G", "Unix Makefiles",
+        "-DCMAKE_TOOLCHAIN_FILE=" + str(root / "install/toolchain/files/amd64-tests.cmake"),
+        "-DCMAKE_C_STANDARD=", "-DCMAKE_CXX_STANDARD=",
+        "-DCMAKE_C_FLAGS=-DREAVEROS_USER_C=1 -DREAVEROS_USER_CONFIGURATION=1",
+        "-DCMAKE_CXX_FLAGS=-DREAVEROS_USER_CXX=1 -DREAVEROS_USER_CONFIGURATION=1",
+        "-DCMAKE_ASM_FLAGS=-Wa,--defsym,REAVEROS_USER_ASM=1 -Wa,--defsym,REAVEROS_CONFIGURATION_ASM=1")
+    run(str(cmake), "--build", str(empty_build), "--parallel", "4")
+    for record in json.loads((empty_build / "compile_commands.json").read_text()):
+        if record["file"].endswith((".c", ".cpp")):
+            expected = "-std=c11" if record["file"].endswith(".c") else "-std=c++20"
+            assert expected in shlex.split(record["command"]), record
+
     # Compile a header available only through a sysroot containing apostrophes.
     # Select the real identity/options files while overriding this fixture's root.
     quoted_sysroot = Path(temporary) / "UEFI sysroot with 'quotes'"

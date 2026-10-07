@@ -13,8 +13,8 @@ def fail(message):
     sys.exit("Toolchain installed state: " + message)
 
 
-if len(sys.argv) != 3 or sys.argv[1] not in ("check", "record", "prune"):
-    fail("usage: installed-state <check|record|prune> <contract.json>")
+if len(sys.argv) != 3 or sys.argv[1] not in ("check", "record", "prune", "probe"):
+    fail("usage: installed-state <check|record|prune|probe> <contract.json>")
 action = sys.argv[1]
 contract = json.loads(Path(sys.argv[2]).read_text())
 if contract.get("version") != 1:
@@ -85,18 +85,10 @@ def inputs_match(state):
         <= stamps["install"].stat().st_mtime_ns for path in inputs)
 
 
-def legacy_matches():
-    # Retained step stamps attest to the inputs actually consumed before this
-    # completion record existed. Adoption requires all installed outputs too.
-    if not stamps["install"].is_file():
-        return False
-    for dependency, step in contract["legacy_inputs"].items():
-        path = Path(dependency)
-        if path.exists() and (not stamps[step].is_file()
-                or stamps[step].stat().st_mtime_ns < path.stat().st_mtime_ns):
-            return False
-    identity = root / "toolchain" / (project + "-source-identity")
-    return not identity.exists() or identity.read_text().strip() == contract["identity"]["source"]
+def installed_inputs_changed(state):
+    # Step timestamps alone cannot attest to the compiler bytes used for an
+    # installation. A missing completion record always requires fresh objects.
+    return not state or state.get("identity") != contract["identity"] or not inputs_match(state)
 
 
 def populated(name):
@@ -145,7 +137,7 @@ def refresh_compiler_metadata():
 
 def recover(state, missing):
     previous = state.get("identity", {}) if state else {}
-    changed = (previous != contract["identity"] or not inputs_match(state)) if state else not legacy_matches()
+    changed = installed_inputs_changed(state)
     restore = not populated("source") or not populated("binary")
     if changed:
         source_identity = root / "toolchain" / (project + "-source-identity")
@@ -187,7 +179,20 @@ except ValueError as error:
     fail(f"invalid installation record for {project}: {error}")
 if state and (state.get("version") != 1 or not isinstance(state.get("identity"), dict)):
     fail(f"unsupported installation record for {project}")
-if action == "record":
+if action == "probe":
+    # Make's dry run cannot execute the guard that repairs or invalidates stamps.
+    # Forecast its effect without modifying any files; only an ordinary retained
+    # build still needs Make to determine which source dependencies are pending.
+    if state and state.get("identity") == contract["identity"] and not missing:
+        if state.get("pruned"):
+            print("build" if not inputs_match(state) else "reuse")
+        else:
+            print("pending")
+    elif installed_inputs_changed(state) or not populated("source") or not populated("binary"):
+        print("build")
+    else:
+        print("install")
+elif action == "record":
     if missing:
         fail(f"{project} installation is incomplete: {missing}")
     if not stamps["install"].is_file():
@@ -207,16 +212,10 @@ elif action == "check":
                     stamps[step].touch()
                 if "inputs" not in state:
                     write_state(True)
-    elif state or stamps["install"].exists():
-        if not state and not missing and legacy_matches():
-            write_state(not populated("source") or not populated("binary"))
-            print(f"{project}: adopted verified legacy installation", flush=True)
-        else:
-            recover(state, missing)
+    elif state or stamps["install"].exists() or populated("binary"):
+        recover(state, missing)
 elif action == "prune":
-    if not stamps["install"].is_file() or missing or (state and (state.get("identity") != contract["identity"]
-            or not inputs_match(state))) \
-            or (not state and not legacy_matches()):
+    if not stamps["install"].is_file() or missing or installed_inputs_changed(state):
         fail(f"refusing to prune incomplete or stale installation of {project}: {missing}")
     for name in ("source", "binary"):
         if directories[name].exists():

@@ -1,10 +1,12 @@
 import json
 from pathlib import Path
+import subprocess
 import sys
 
 # Generated installed artifacts for the real superbuild's stamp-layout fixture.
-# Actual compilation, failure recovery, and legacy adoption have separate tests.
+# Actual compilation, failure recovery, and legacy recovery have separate tests.
 root = Path(sys.argv[1])
+repository = Path(__file__).resolve().parents[5]
 for path in (root / "toolchain").glob("*-lifecycle.json"):
     contract = json.loads(path.read_text())
     for output in contract["required_outputs"]:
@@ -22,3 +24,5 @@ for path in (root / "toolchain").glob("*-lifecycle.json"):
         target.touch()
     (root / "toolchain" / (contract["project"] + "-source-identity")).write_text(
         contract["identity"]["source"] + "\n")
+    subprocess.run([sys.executable, str(repository / "toolchain/installed-state"),
+                    "record", str(path)], check=True)
