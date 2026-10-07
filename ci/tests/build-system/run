@@ -44,8 +44,6 @@ for name in ('test-build-image', 'test-prune-image', 'test-update-images',
              'test-verify-build-environment-packages', 'test-compiler-cache-options',
              'test-build-toolchain-probe', 'test-update-images-probe'):
     run(str(repository / 'docker' / name))
-for name in ('test-push-images', 'test-strip-ecr-registry'):
-    run(str(repository / 'ci/aws' / name))
 for name in fixtures[1:]:
     run(str(directory / ('test-' + name)))
 with tempfile.TemporaryDirectory(prefix='build-system patch dependencies ') as temporary:

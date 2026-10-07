@@ -129,14 +129,6 @@ def compiler_cache_matches():
         if values[key] != expected_compiler["COMPILER"] \
                 or values.get(key + "_ARG1", "") != expected_compiler["COMPILER_ARG1"]:
             return False
-        metadata = [path for path in (directories["binary"] / "CMakeFiles").glob("*/CMake" + language + "Compiler.cmake")
-                    if re.fullmatch(r"[0-9]+(?:\.[0-9]+)+", path.parent.name)]
-        if not metadata:
-            return False
-        latest = max(metadata, key=lambda path: tuple(int(part) for part in path.parent.name.split(".")))
-        version = re.search(r'set\(CMAKE_' + language + r'_COMPILER_VERSION "([^"]*)"\)', latest.read_text())
-        if not version or version[1] != expected_compiler["COMPILER_VERSION"]:
-            return False
     return checked
 
 
@@ -160,7 +152,10 @@ def recover(state, missing):
         previous_source = previous.get("source") if state else \
             source_identity.read_text().strip() if source_identity.exists() else None
         same_source = previous_source == contract["identity"]["source"]
-        incremental = same_source and not restore and compiler_cache_matches()
+        # Old records cannot attest to the compiler bytes used for their objects.
+        same_compilers = previous.get("compilers") == contract["identity"].get("compilers") \
+            and "compilers" in previous
+        incremental = same_source and same_compilers and not restore and compiler_cache_matches()
         if incremental:
             refresh_compiler_metadata()
             print(f"{project}: retaining configured build tree for incremental recovery", flush=True)

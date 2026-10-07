@@ -68,15 +68,13 @@ with tempfile.TemporaryDirectory(prefix="toolchain state with spaces ") as tempo
         marker.unlink()
     make()
     assert run(str(installed)).strip() == "1"
-    # Legacy and recorded configuration changes retain unrelated objects while
+    # Records with compiler fingerprints retain unrelated objects while
     # rebuilding the affected target and republishing its installation.
     reusable = binary / "CMakeFiles/reusable.dir/reusable.c.o"
     reusable_time = reusable.stat().st_mtime_ns
     sentinel = binary / "retained-build-state"
     sentinel.write_text("retain configured build state\n")
-    for value, legacy in ((2, True), (1, False)):
-        if legacy:
-            state.unlink()
+    for value in (2, 1):
         configure(value=value)
         output = make()
         assert "retaining configured build tree for incremental recovery" in output, output
@@ -96,9 +94,29 @@ with tempfile.TemporaryDirectory(prefix="toolchain state with spaces ") as tempo
     compiler_entry = next(line for line in (binary / "CMakeCache.txt").read_text().splitlines()
                           if line.startswith("CMAKE_C_COMPILER:"))
     assert compiler_entry.split("=", 1)[1] == str(selected_compiler), compiler_entry
+    # Replacing the executable at the same path is visible even though CMake
+    # retains the old compiler version in its detection metadata.
+    before_compiler = json.loads(descriptor.read_text())["identity"]["compilers"]
+    sentinel.write_text("discard after compiler replacement\n")
+    selected_compiler.unlink()
+    selected_compiler.write_text('#!/bin/sh\nexec "' + original_compiler + '" "$@"\n')
+    selected_compiler.chmod(0o755)
+    configure(1, 2, "-DCMAKE_C_COMPILER=" + str(selected_compiler))
+    assert json.loads(descriptor.read_text())["identity"]["compilers"] != before_compiler
+    output = make()
+    assert "retaining configured build tree" not in output, output
+    assert not sentinel.exists()
     next((build / "CMakeFiles").glob("*/CMakeCCompiler.cmake")).unlink()
     configure(1, 2, "-DCMAKE_C_COMPILER=" + original_compiler)
     make()
+    # Legacy records without compiler attestation must establish fresh objects.
+    record = json.loads(state.read_text())
+    record["identity"].pop("compilers")
+    state.write_text(json.dumps(record))
+    sentinel.write_text("discard unverified legacy compiler state\n")
+    output = make()
+    assert "retaining configured build tree" not in output, output
+    assert not sentinel.exists()
     first = {path: path.stat().st_mtime_ns for path in (installed, state)}
     assert "Performing " not in make()
     configure()
