@@ -2,7 +2,14 @@ cmake_minimum_required(VERSION 3.31)
 if (NOT CMAKE_GENERATOR STREQUAL "Unix Makefiles")
     message(FATAL_ERROR "Unsupported CMake generator '${CMAKE_GENERATOR}'.\nReaverOS requires GNU Make. Configure with -G 'Unix Makefiles'.")
 endif()
-project(reaveros-meta C CXX)
+project(reaveros-meta LANGUAGES NONE)
+execute_process(COMMAND "${CMAKE_MAKE_PROGRAM}" --version
+    RESULT_VARIABLE _reaveros_make_result OUTPUT_VARIABLE _reaveros_make_version
+    ERROR_QUIET TIMEOUT 10)
+if (NOT _reaveros_make_result EQUAL 0 OR NOT _reaveros_make_version MATCHES "^GNU Make ")
+    message(FATAL_ERROR "ReaverOS requires GNU Make; selected '${CMAKE_MAKE_PROGRAM}' is unsupported.")
+endif()
+enable_language(C CXX)
 
 set(REAVEROS_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 set(REAVEROS_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR})

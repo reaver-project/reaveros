@@ -126,4 +126,26 @@ do
     fi
 done
 
+unsupported_make="${test_directory}/unsupported make"
+cat > "${unsupported_make}" <<'MAKE'
+#!/bin/sh
+printf 'BSD make\n'
+MAKE
+chmod +x "${unsupported_make}"
+if cmake -S "${repo_root}" -B "${test_directory}/unsupported-make" -G 'Unix Makefiles' \
+    "-DCMAKE_MAKE_PROGRAM=${unsupported_make}" \
+    -DCMAKE_C_COMPILER=/nonexistent/compiler -DCMAKE_CXX_COMPILER=/nonexistent/compiler \
+    > "${test_directory}/make-log" 2>&1
+then
+    printf 'Unsupported Make implementation configured successfully.\n' >&2
+    exit 1
+fi
+if ! grep --fixed-strings --quiet 'ReaverOS requires GNU Make' "${test_directory}/make-log" \
+    || ! grep --fixed-strings --quiet "${unsupported_make}" "${test_directory}/make-log"
+then
+    cat "${test_directory}/make-log" >&2
+    printf 'Unsupported Make implementation failed without the expected diagnostic.\n' >&2
+    exit 1
+fi
+
 printf 'Build selection tests passed.\n'
