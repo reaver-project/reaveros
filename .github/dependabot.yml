@@ -1,0 +1,18 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: "reaver-project/infrastructure"
+      - dependency-name: "reaver-project/infrastructure/*"
+    groups:
+      actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: npm
+    directory: /maintenance/copilot
+    schedule:
+      interval: weekly
