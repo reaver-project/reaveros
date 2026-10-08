@@ -1,0 +1,128 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+
+language: en-US
+early_access: false
+enable_free_tier: true
+
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+  high_level_summary_in_walkthrough: true
+  high_level_summary_instructions: |
+    Summarize changes by subsystem, trust boundary, and operator-visible
+    behavior. Call out CI authorization, ephemeral-runner lifecycle, toolchain
+    or cache identity, image promotion, infrastructure-contract compatibility,
+    kernel or userspace ABI effects, and required migration or maintenance
+    steps. When infrastructure-facing behavior changes, compare it against the
+    linked reaver-project/infrastructure contract and shared actions.
+  in_progress_fortune: false
+  poem: false
+  review_status: true
+  review_details: true
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    drafts: false
+    labels:
+      - "!do-not-review"
+    ignore_title_keywords:
+      - "[skip review]"
+  path_filters:
+    - "!build/**"
+    - "!build-results/**"
+    - "!install/**"
+  path_instructions:
+    - path: ".github/workflows/**"
+      instructions: |
+        Treat workflow changes as security-sensitive. Check event and actor trust
+        boundaries, permissions, untrusted expression interpolation, immutable
+        action pins, reusable-workflow data flow, concurrency, and cleanup.
+        Preserve the separation between trusted GitHub-hosted authorization and
+        execution of pull-request code on ephemeral AWS runners.
+    - path: "ci/**"
+      instructions: |
+        Review authorization and cache-promotion logic for fail-closed behavior,
+        exact-revision binding, quoting, cleanup on every failure path, and
+        agreement with the real CMake/Make build graph. Keep independently useful
+        CI tasks independently visible and parallel.
+    - path: "kernel/**"
+      instructions: |
+        Prioritize memory safety, ownership and lifetime, integer overflow,
+        concurrency and memory-ordering correctness, interrupt-context constraints,
+        ABI stability, and validation of values crossing privilege boundaries.
+        Do not recommend hosted-runtime facilities for freestanding code.
+    - path: "kernel/arch/**"
+      instructions: |
+        Check that architecture-specific behavior remains behind the existing
+        architecture boundary. Verify page-table, interrupt, SMP, register, and
+        calling-convention assumptions against amd64 hardware semantics.
+    - path: "libraries/**"
+      instructions: |
+        Preserve the hosted/freestanding split, public ABI and API compatibility,
+        allocator and lifetime requirements, and the repository's snake_case
+        identifier convention. CamelCase names are reserved for template
+        parameters.
+    - path: "loaders/**"
+      instructions: |
+        Review firmware-facing code for UEFI ABI correctness, physical versus
+        virtual address handling, memory-map lifetime, overflow, and assumptions
+        made when transferring control to the kernel.
+    - path: "userspace/**"
+      instructions: |
+        Check IPC contracts, generated-interface assumptions, error propagation,
+        ownership, and the separation between userspace declarations and
+        kernel/vDSO implementations.
+    - path: "cmake/**"
+      instructions: |
+        Validate dependency edges, target naming, architecture and language
+        abstraction, configure-time dependencies, out-of-tree builds, and whether
+        generated outputs are placed in the build tree.
+    - path: "**/CMakeLists.txt"
+      instructions: |
+        Check integration with aggregate targets and the top-level CTest suite.
+        Avoid hidden serialization, unnecessary rebuilds, and dependencies on
+        generated files in the source tree.
+    - path: "**/*.cmake"
+      instructions: |
+        Check component architecture/mode metadata, dependency edges, target names,
+        install ownership, and stale-file cleanup. Preserve specialized target ABI
+        requirements. Keep concrete component declarations beside their sources
+        and project-specific composition in the owning project; cmake/ contains
+        reusable abstractions.
+    - path: "toolchain/**"
+      instructions: |
+        Treat versions, source revisions, patches, and patch application order as
+        reproducibility inputs. Check download verification, reconfiguration after
+        input changes, host/target separation, and pruning behavior.
+    - path: "docker/**"
+      instructions: |
+        Check that cache identity covers all semantic toolchain inputs, mounts use
+        resolved paths, build arguments cannot collide, and pruned and unpruned
+        images follow the same validation and promotion policy.
+    - path: "maintenance/**"
+      instructions: |
+        Treat upstream content and pull-request metadata as untrusted. Check token
+        scope and lifetime, exact revision pinning, patch-refresh state handling,
+        idempotency, and failure recovery.
+
+chat:
+  art: false
+  allow_non_org_members: true
+  auto_reply: true
+
+knowledge_base:
+  learnings:
+    scope: local
+  issues:
+    scope: local
+  pull_requests:
+    scope: local
+  linked_repositories:
+    - repository: reaver-project/infrastructure
+      instructions: |
+        This repository owns the AWS runner platform, IAM and OIDC boundaries,
+        ECR repositories, shared runner actions, GitHub policy, and the versioned
+        infrastructure contract consumed by ReaverOS. Use it to check runner
+        labels, AWS variables, shared-action inputs and outputs, contract-version
+        coordination, and build-environment promotion assumptions.
