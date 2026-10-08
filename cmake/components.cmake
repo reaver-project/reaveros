@@ -246,14 +246,20 @@ function(reaveros_include_component _directory)
     if (NOT DEFINED _registration_BINARY_ROOT)
         set(_registration_BINARY_ROOT "${CMAKE_CURRENT_BINARY_DIR}")
     endif()
+    get_filename_component(_source_directory "${_directory}" ABSOLUTE
+        BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+    get_filename_component(_component_name "${_source_directory}" NAME)
 
     set(_component_vars
         REAVEROS_COMPONENT_ARCHITECTURES
         REAVEROS_COMPONENT_INSTALL_PATH
         REAVEROS_COMPONENT_MODES
         REAVEROS_COMPONENT_SKIP_MODE_NAME
+        REAVEROS_COMPONENT_REGISTER_AGGREGATES
         REAVEROS_COMPONENT_DEPENDS
         REAVEROS_COMPONENT_CMAKE_ARGS
+        REAVEROS_COMPONENT_INSTALL_TRANSFER_FROM
+        REAVEROS_COMPONENT_INSTALL_TRANSFER_ROOTS
     )
     foreach (_mode IN LISTS _reaveros_modes)
         string(TOUPPER "${_mode}" _mode_uppercase)
@@ -263,15 +269,16 @@ function(reaveros_include_component _directory)
         set(${_variable} "")
     endforeach()
     set(REAVEROS_COMPONENT_SKIP_MODE_NAME FALSE)
+    set(REAVEROS_COMPONENT_REGISTER_AGGREGATES TRUE)
 
-    include("${_directory}/component.cmake")
+    include("${_source_directory}/component.cmake")
 
     get_cmake_property(_metadata_variables VARIABLES)
     list(FILTER _metadata_variables INCLUDE REGEX "^REAVEROS_COMPONENT_")
     foreach (_variable IN LISTS _metadata_variables)
         if (NOT _variable IN_LIST _component_vars)
             message(FATAL_ERROR
-                "Component '${_directory}' (${CMAKE_CURRENT_SOURCE_DIR}/${_directory}): unknown metadata field '${_variable}'.")
+                "Component '${_directory}' (${_source_directory}): unknown metadata field '${_variable}'.")
         endif()
     endforeach()
 
@@ -281,9 +288,16 @@ function(reaveros_include_component _directory)
         list(APPEND _mode_dependencies "DEPENDS_${_mode_uppercase}"
             ${REAVEROS_COMPONENT_DEPENDS_${_mode_uppercase}})
     endforeach()
+    set(_install_transfer "")
+    if (REAVEROS_COMPONENT_INSTALL_TRANSFER_FROM)
+        list(APPEND _install_transfer INSTALL_TRANSFER_FROM "${REAVEROS_COMPONENT_INSTALL_TRANSFER_FROM}")
+    endif()
+    if (REAVEROS_COMPONENT_INSTALL_TRANSFER_ROOTS)
+        list(APPEND _install_transfer INSTALL_TRANSFER_ROOTS ${REAVEROS_COMPONENT_INSTALL_TRANSFER_ROOTS})
+    endif()
     reaveros_add_component(
-        NAME "${_directory}"
-        SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/${_directory}"
+        NAME "${_component_name}"
+        SOURCE_DIR "${_source_directory}"
         BINARY_ROOT "${_registration_BINARY_ROOT}"
         PREFIX "${_registration_PREFIX}"
         TAGS ${_registration_TAGS}
@@ -291,8 +305,10 @@ function(reaveros_include_component _directory)
         MODES ${REAVEROS_COMPONENT_MODES}
         INSTALL_PATH "${REAVEROS_COMPONENT_INSTALL_PATH}"
         SKIP_MODE_NAME "${REAVEROS_COMPONENT_SKIP_MODE_NAME}"
+        REGISTER_AGGREGATES "${REAVEROS_COMPONENT_REGISTER_AGGREGATES}"
         DEPENDS ${REAVEROS_COMPONENT_DEPENDS}
         CMAKE_ARGS ${REAVEROS_COMPONENT_CMAKE_ARGS}
+        ${_install_transfer}
         ${_mode_dependencies}
     )
 endfunction()

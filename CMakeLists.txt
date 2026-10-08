@@ -96,7 +96,7 @@ reaveros_include_component(kernel
 )
 
 add_subdirectory(libraries)
-include(cmake/kernel_components.cmake)
+include(kernel/components.cmake)
 add_subdirectory(loaders)
 add_subdirectory(userspace)
 add_subdirectory(images)
