@@ -80,6 +80,29 @@ with tempfile.TemporaryDirectory() as temporary:
     assert "library-alpha-tests-amd64" in report(skip_build)
     assert "library-alpha-hosted-amd64" not in report(skip_build)
 
+    nested_source = source / "nested/internal"
+    shutil.copytree(source / "beta", nested_source)
+    nested_metadata = nested_source / "component.cmake"
+    nested_metadata.write_text(nested_metadata.read_text()
+        + '\nset(REAVEROS_COMPONENT_MODES hosted)\n'
+        + 'set(REAVEROS_COMPONENT_SKIP_MODE_NAME TRUE)\n'
+        + 'set(REAVEROS_COMPONENT_REGISTER_AGGREGATES FALSE)\n'
+        + 'set(REAVEROS_COMPONENT_INSTALL_TRANSFER_FROM [=[legacy-${_architecture}]=])\n'
+        + 'set(REAVEROS_COMPONENT_INSTALL_TRANSFER_ROOTS '
+        + '[=[sysroots/${_architecture}-${_mode}/layout with spaces/usr/include]=])\n')
+    nested_build = directory / "nested component build"
+    configure(nested_build, case="nested")
+    nested_contract = report(nested_build)
+    assert "internal-amd64" in nested_contract
+    assert "internal-amd64" not in nested_contract["all-amd64"]["MANUALLY_ADDED_DEPENDENCIES"]
+    assert set(nested_contract["all-amd64-hosted-libraries"]["MANUALLY_ADDED_DEPENDENCIES"]) == {
+        "library-beta-hosted-amd64"}
+    transfer = nested_build / "cmake/install-transfers/internal-amd64.txt"
+    assert transfer.read_text().splitlines() == [
+        "legacy-amd64", "sysroots/amd64-hosted/layout with spaces/usr/include"]
+    assert sorted(path.name for path in transfer.parent.iterdir()) == ["internal-amd64.txt"]
+    assert (nested_build / "nested-source.txt").read_text().strip() == str(nested_source)
+
     cases = {
         "missing-name": "missing NAME",
         "missing-source": "missing SOURCE_DIR",
@@ -120,4 +143,4 @@ with tempfile.TemporaryDirectory() as temporary:
     output = configure(directory / "unknown-metadata", case="metadata", succeeds=False)
     assert "unknown metadata field 'REAVEROS_COMPONENT_DEPENDS_HOTSED'" in " ".join(output.split()), output
 
-print("Component registration preserves mode dependencies, names, aggregates, paths, and diagnostics.")
+print("Component registration preserves mode dependencies, names, nested paths, aggregates, install transfers, and diagnostics.")
