@@ -6,9 +6,9 @@ set(REAVEROS_CMAKE_EXCLUDE "")
 
 set(REAVEROS_LLVM_REPO https://github.com/llvm/llvm-project)
 # Keep the tag, commit, and official release-asset digest in sync.
-set(REAVEROS_LLVM_TAG llvmorg-23.1.5)
-set(REAVEROS_LLVM_REVISION 392dfff97d29b59d77e5cac6d4b6ef2585fe7117)
-set(REAVEROS_LLVM_SOURCE_SHA256 fb50b1eac93ddeb3aa8dab4cfe324dff74f4a9c2bdee6160c9e36188f8d06a6e)
+set(REAVEROS_LLVM_TAG llvmorg-23.1.6)
+set(REAVEROS_LLVM_REVISION 5b10d2d74929eae78912771222c9855af97496f4)
+set(REAVEROS_LLVM_SOURCE_SHA256 d3b86ab29cfb4445a6652e5c2642ccc75e04e38084dde3701d323320f35a31da)
 set(REAVEROS_LLVM_PATTERN llvmorg-[0-9]+\.[0-9]+\.[0-9]+)
 set(REAVEROS_LLVM_EXCLUDE llvmorg-.*-init)
 
